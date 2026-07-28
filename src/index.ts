@@ -14,7 +14,13 @@ import type {
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { setupLiteLLMCostTracking } from "./cost.js";
-import { discoverModels, isGpt55Model, normalizeBaseUrl, shouldSuppressReasoningContent } from "./discover.js";
+import {
+  discoverModels,
+  isGpt55Model,
+  isMoonshotModel,
+  normalizeBaseUrl,
+  shouldSuppressReasoningContent,
+} from "./discover.js";
 import {
   getGcloudToken,
   getGcloudTokenCacheKey,
@@ -645,6 +651,31 @@ function isReasoningItem(item: unknown): boolean {
   return typeof item === "object" && item !== null && (item as { type?: unknown }).type === "reasoning";
 }
 
+// Returns the original message reference when no normalization is needed.
+function normalizeStrictToolMessage(message: any): any {
+  if (
+    message.role === "assistant" &&
+    Array.isArray(message.tool_calls) &&
+    message.tool_calls.length > 0 &&
+    message.content == null
+  ) {
+    return { ...message, content: "" };
+  }
+  if (message.role === "tool" && Array.isArray(message.content)) {
+    return {
+      ...message,
+      content: message.content
+        .map((part: any) => {
+          if (typeof part === "string") return part;
+          if (part && part.type === "text") return part.text || "";
+          return "";
+        })
+        .join(""),
+    };
+  }
+  return message;
+}
+
 // Reasoning fields LiteLLM forwards to chat-completions providers. The Moonshot
 // path defaults them off; the gpt-5.5 tool path strips them entirely.
 const REASONING_SUPPRESSION_DEFAULTS: Record<string, unknown> = {
@@ -701,6 +732,19 @@ function prepareLiteLLMRequestPayload(
     if (Array.isArray(input) && input.some(isReasoningItem)) {
       next ??= { ...payload };
       next.input = input.filter((item) => !isReasoningItem(item));
+    }
+  }
+
+  // Moonshot/Kimi applies strict OpenAI schema validation: assistant tool calls
+  // must carry string content, and tool results must be plain text.
+  if (modelId && isMoonshotModel(modelId)) {
+    const messages = (next ?? payload).messages;
+    if (Array.isArray(messages)) {
+      const normalized = messages.map(normalizeStrictToolMessage);
+      if (normalized.some((message, index) => message !== messages[index])) {
+        next ??= { ...payload };
+        next.messages = normalized;
+      }
     }
   }
 
