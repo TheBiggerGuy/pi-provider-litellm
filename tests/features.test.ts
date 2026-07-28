@@ -760,7 +760,7 @@ describe("feature parity", () => {
     });
   });
 
-  it("flattens array tool result content for Kimi requests", async () => {
+  it("preserves image blocks after Kimi tool results", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
     process.env.LITELLM_API_KEY = "sk-test";
@@ -779,12 +779,14 @@ describe("feature parity", () => {
             {
               role: "tool",
               tool_call_id: "call_1",
-              content: [
-                "plain ",
-                { type: "text", text: "text part" },
-                { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
-              ],
+              content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } }],
             },
+            {
+              role: "tool",
+              tool_call_id: "call_2",
+              content: [{ type: "text", text: "second output" }],
+            },
+            { role: "tool", tool_call_id: "call_3", content: [] },
           ],
         },
       },
@@ -792,7 +794,18 @@ describe("feature parity", () => {
     );
 
     expect(updated).toEqual({
-      messages: [{ role: "tool", tool_call_id: "call_1", content: "plain text part" }],
+      messages: [
+        { role: "tool", tool_call_id: "call_1", content: "(see attached image)" },
+        { role: "tool", tool_call_id: "call_2", content: "second output" },
+        { role: "tool", tool_call_id: "call_3", content: "(no tool output)" },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Attached image(s) from tool result:" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+          ],
+        },
+      ],
       include_reasoning: false,
       reasoning_content: false,
       merge_reasoning_content_in_choices: true,
