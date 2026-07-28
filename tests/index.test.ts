@@ -321,7 +321,11 @@ describe("extension startup", () => {
       "https://litellm.example.com/model/info",
       "https://litellm.example.com/mcp-rest/tools/list",
     ]);
-    expect(pi.tools.map((tool) => tool.name)).toContain("mcp_brave_search");
+    // MCP registration runs in the background so a hanging /mcp-rest endpoint
+    // cannot block model refresh; wait for it to finish before asserting.
+    await vi.waitFor(() => {
+      expect(pi.tools.map((tool) => tool.name)).toContain("mcp_brave_search");
+    });
     expect(pi.providers[0]?.getModels()).toEqual([stored]);
   });
 

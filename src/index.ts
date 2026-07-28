@@ -14,7 +14,13 @@ import type {
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { setupLiteLLMCostTracking } from "./cost.js";
-import { discoverModels, isGpt55Model, normalizeBaseUrl, shouldSuppressReasoningContent } from "./discover.js";
+import {
+  discoverModels,
+  isGpt55Model,
+  isMoonshotModel,
+  normalizeBaseUrl,
+  shouldSuppressReasoningContent,
+} from "./discover.js";
 import {
   getGcloudToken,
   getGcloudTokenCacheKey,
@@ -645,6 +651,53 @@ function isReasoningItem(item: unknown): boolean {
   return typeof item === "object" && item !== null && (item as { type?: unknown }).type === "reasoning";
 }
 
+// Returns the original array reference when no normalization is needed.
+function normalizeStrictToolMessages(messages: any[]): any[] {
+  const normalized: any[] = [];
+  let imageParts: any[] = [];
+  let changed = false;
+  const flushImages = (): void => {
+    if (imageParts.length === 0) return;
+    normalized.push({
+      role: "user",
+      content: [{ type: "text", text: "Attached image(s) from tool result:" }, ...imageParts],
+    });
+    imageParts = [];
+  };
+
+  for (const message of messages) {
+    if (message.role !== "tool") flushImages();
+    if (
+      message.role === "assistant" &&
+      Array.isArray(message.tool_calls) &&
+      message.tool_calls.length > 0 &&
+      message.content == null
+    ) {
+      normalized.push({ ...message, content: "" });
+      changed = true;
+    } else if (message.role === "tool" && Array.isArray(message.content)) {
+      const previousImageCount = imageParts.length;
+      const content = message.content
+        .map((part: any) => {
+          if (typeof part === "string") return part;
+          if (part?.type === "text") return part.text || "";
+          if (part?.type === "image_url") imageParts.push(part);
+          return "";
+        })
+        .join("");
+      normalized.push({
+        ...message,
+        content: content || (imageParts.length > previousImageCount ? "(see attached image)" : "(no tool output)"),
+      });
+      changed = true;
+    } else {
+      normalized.push(message);
+    }
+  }
+  flushImages();
+  return changed ? normalized : messages;
+}
+
 // Reasoning fields LiteLLM forwards to chat-completions providers. The Moonshot
 // path defaults them off; the gpt-5.5 tool path strips them entirely.
 const REASONING_SUPPRESSION_DEFAULTS: Record<string, unknown> = {
@@ -701,6 +754,19 @@ function prepareLiteLLMRequestPayload(
     if (Array.isArray(input) && input.some(isReasoningItem)) {
       next ??= { ...payload };
       next.input = input.filter((item) => !isReasoningItem(item));
+    }
+  }
+
+  // Moonshot/Kimi applies strict OpenAI schema validation: assistant tool calls
+  // must carry string content, and tool results must be plain text.
+  if (modelId && isMoonshotModel(modelId)) {
+    const messages = (next ?? payload).messages;
+    if (Array.isArray(messages)) {
+      const normalized = normalizeStrictToolMessages(messages);
+      if (normalized !== messages) {
+        next ??= { ...payload };
+        next.messages = normalized;
+      }
     }
   }
 

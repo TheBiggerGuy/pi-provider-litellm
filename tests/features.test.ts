@@ -715,6 +715,159 @@ describe("feature parity", () => {
     expect(updated).toBeUndefined();
   });
 
+  it("fills empty assistant content on Kimi tool calls", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { data: [] }));
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.(
+      {
+        payload: {
+          messages: [
+            { role: "user", content: "hi" },
+            {
+              role: "assistant",
+              content: null,
+              tool_calls: [{ id: "call_1", type: "function", function: { name: "noop", arguments: "{}" } }],
+            },
+            { role: "tool", tool_call_id: "call_1", content: "tool output" },
+          ],
+        },
+      },
+      { model: { provider: "litellm", id: "kimi-k3" } },
+    );
+
+    expect(updated).toEqual({
+      messages: [
+        { role: "user", content: "hi" },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{ id: "call_1", type: "function", function: { name: "noop", arguments: "{}" } }],
+        },
+        { role: "tool", tool_call_id: "call_1", content: "tool output" },
+      ],
+      include_reasoning: false,
+      reasoning_content: false,
+      merge_reasoning_content_in_choices: true,
+    });
+  });
+
+  it("preserves image blocks after Kimi tool results", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { data: [] }));
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.(
+      {
+        payload: {
+          messages: [
+            {
+              role: "tool",
+              tool_call_id: "call_1",
+              content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } }],
+            },
+            {
+              role: "tool",
+              tool_call_id: "call_2",
+              content: [{ type: "text", text: "second output" }],
+            },
+            { role: "tool", tool_call_id: "call_3", content: [] },
+          ],
+        },
+      },
+      { model: { provider: "litellm", id: "kimi-k3" } },
+    );
+
+    expect(updated).toEqual({
+      messages: [
+        { role: "tool", tool_call_id: "call_1", content: "(see attached image)" },
+        { role: "tool", tool_call_id: "call_2", content: "second output" },
+        { role: "tool", tool_call_id: "call_3", content: "(no tool output)" },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Attached image(s) from tool result:" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+          ],
+        },
+      ],
+      include_reasoning: false,
+      reasoning_content: false,
+      merge_reasoning_content_in_choices: true,
+    });
+  });
+
+  it("leaves well-formed Kimi tool messages untouched", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { data: [] }));
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const messages = [
+      {
+        role: "assistant",
+        content: "calling the tool",
+        tool_calls: [{ id: "call_1", type: "function", function: { name: "noop", arguments: "{}" } }],
+      },
+      { role: "tool", tool_call_id: "call_1", content: "tool output" },
+    ];
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.({ payload: { messages } }, { model: { provider: "litellm", id: "kimi-k3" } });
+
+    expect(updated?.messages).toBe(messages);
+  });
+
+  it("leaves strict-schema tool messages untouched for non-Moonshot models", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { data: [] }));
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.(
+      {
+        payload: {
+          messages: [
+            {
+              role: "assistant",
+              content: null,
+              tool_calls: [{ id: "call_1", type: "function", function: { name: "noop", arguments: "{}" } }],
+            },
+            { role: "tool", tool_call_id: "call_1", content: [{ type: "text", text: "tool output" }] },
+          ],
+        },
+      },
+      { model: { provider: "litellm", id: "anthropic/claude-3-5-sonnet" } },
+    );
+
+    expect(updated).toBeUndefined();
+  });
+
   it("drops reasoning fields for llm-gateway/gpt-5.5 tool requests", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
