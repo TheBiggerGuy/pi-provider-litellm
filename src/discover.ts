@@ -139,6 +139,7 @@ function catalogLookupIds(id: string): string[] {
   const anthropicAlias = unprefixed.toLowerCase().replaceAll(".", "-");
   const match = /^(?:claude-)?(opus|sonnet|haiku)-(\d+)-(\d+)$/.exec(anthropicAlias);
   if (match) lookupIds.add(`claude-${match[1]}-${match[2]}-${match[3]}`);
+  if (anthropicAlias === "fable-5") lookupIds.add("claude-fable-5");
 
   return [...lookupIds];
 }
