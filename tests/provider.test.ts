@@ -55,6 +55,22 @@ function store(initial?: readonly Model<Api>[]) {
   return value;
 }
 
+class PrototypeStore implements ProviderModelsStore {
+  entry: Awaited<ReturnType<ProviderModelsStore["read"]>>;
+
+  async read() {
+    return this.entry;
+  }
+
+  async write(entry: Parameters<ProviderModelsStore["write"]>[0]) {
+    this.entry = entry;
+  }
+
+  async delete() {
+    this.entry = undefined;
+  }
+}
+
 function context(modelsStore: ProviderModelsStore, allowNetwork: boolean): RefreshModelsContext {
   return { store: modelsStore, allowNetwork, credential };
 }
@@ -190,6 +206,16 @@ describe("createLiteLLMProvider", () => {
     expect(value.getModels()).toEqual([native("fresh")]);
     expect(modelsStore.write).toHaveBeenCalledOnce();
     expect(modelsStore.write).toHaveBeenCalledWith(expect.objectContaining({ models: [native("fresh")] }));
+  });
+
+  it("persists online discovery through a prototype-backed store", async () => {
+    const modelsStore = new PrototypeStore();
+    const value = controller({ discover: vi.fn(async () => discovered("fresh")) });
+
+    await value.refreshModels?.(context(modelsStore, true));
+
+    expect(value.getModels()).toEqual([native("fresh")]);
+    expect(modelsStore.entry?.models).toEqual([native("fresh")]);
   });
 
   it("publishes discovered models with the credential URL", async () => {
