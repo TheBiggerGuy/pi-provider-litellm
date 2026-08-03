@@ -922,6 +922,33 @@ describe("discoverModels fallback to /v1/models", () => {
     });
   });
 
+  it("enriches a bare Opus 5 fallback model from the Pi catalog", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof URL ? input.toString() : String(input);
+      if (url.endsWith("/model/info")) return new Response(null, { status: 403 });
+      if (url.endsWith("/v1/models")) {
+        return jsonResponse(200, {
+          data: [{ id: "opus-5", object: "model", owned_by: "openai" }],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", { modelsDev: false });
+
+    expect(result).toMatchObject({
+      source: "models_list",
+      models: [
+        {
+          id: "opus-5",
+          name: "Claude Opus 5",
+          reasoning: true,
+          thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+        },
+      ],
+    });
+  });
+
   it("uses models.dev metadata when LiteLLM returns provider ownership", async () => {
     const urls: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
