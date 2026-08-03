@@ -124,6 +124,7 @@ describe("createLiteLLMProvider", () => {
             ...native("opus-5"),
             name: "opus-5 (no metadata)",
             reasoning: false,
+            maxTokens: 16_384,
           },
         ]),
         false,
@@ -142,6 +143,32 @@ describe("createLiteLLMProvider", () => {
       }),
     ]);
     expect(discover).not.toHaveBeenCalled();
+  });
+
+  it("keeps partially enriched stale cached aliases unchanged offline", async () => {
+    const legacyFallback: Model<Api> = {
+      ...native("opus-5"),
+      name: "opus-5 (no metadata)",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 16_384,
+    };
+    const partialCached: Model<Api>[] = [
+      { ...legacyFallback, reasoning: true },
+      { ...legacyFallback, input: ["text", "image"] },
+      { ...legacyFallback, cost: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      { ...legacyFallback, contextWindow: 128_001 },
+      { ...legacyFallback, maxTokens: 16_385 },
+    ];
+    for (const cached of partialCached) {
+      const value = controller();
+
+      await value.refreshModels?.(context(store([cached]), false));
+
+      expect(value.getModels()).toEqual([cached]);
+    }
   });
 
   it("keeps unknown stale cached models unchanged offline", async () => {
