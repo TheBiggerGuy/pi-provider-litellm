@@ -1027,7 +1027,7 @@ describe("feature parity", () => {
     }
   });
 
-  it("normalizes capitalized reasoning effort values to lowercase", async () => {
+  it("normalizes capitalized reasoning effort values for Gemini models only", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
     process.env.LITELLM_API_KEY = "sk-test";
@@ -1055,6 +1055,19 @@ describe("feature parity", () => {
       reasoning_effort: "high",
       reasoning: { effort: "high", summary: "auto" },
     });
+
+    expect(
+      beforeRequest?.(
+        {
+          payload: {
+            messages: [{ role: "user", content: "hello" }],
+            reasoning_effort: "MAX_THINKING",
+            reasoning: { effort: "MAX_THINKING", summary: "auto" },
+          },
+        },
+        { model: { provider: "litellm", id: "custom/reasoner" } },
+      ),
+    ).toBeUndefined();
   });
 
   it("normalizes Kimi think tags into Pi thinking blocks", async () => {
