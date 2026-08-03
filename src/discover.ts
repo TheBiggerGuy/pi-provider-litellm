@@ -132,6 +132,7 @@ function findCatalogModel(id: string, ownedBy?: string): Model<Api> | undefined 
 }
 
 export function enrichCachedModel(model: Model<Api>): Model<Api> {
+  // ponytail: legacy cache lacks field provenance; add per-field cache provenance if strict preservation becomes necessary.
   if (
     !model.name.endsWith(" (no metadata)") ||
     model.reasoning ||
