@@ -770,6 +770,27 @@ function prepareLiteLLMRequestPayload(
     }
   }
 
+  const currentPayload = next ?? payload;
+  if (typeof currentPayload.reasoning_effort === "string") {
+    const lower = currentPayload.reasoning_effort.toLowerCase();
+    if (currentPayload.reasoning_effort !== lower) {
+      next ??= { ...payload };
+      next.reasoning_effort = lower;
+    }
+  }
+
+  const reasoningPayload = next ?? payload;
+  if (isPlainObject(reasoningPayload.reasoning) && typeof reasoningPayload.reasoning.effort === "string") {
+    const lower = reasoningPayload.reasoning.effort.toLowerCase();
+    if (reasoningPayload.reasoning.effort !== lower) {
+      next ??= { ...payload };
+      next.reasoning = {
+        ...(next.reasoning as Record<string, unknown>),
+        effort: lower,
+      };
+    }
+  }
+
   if (sessionId) {
     next ??= { ...payload };
     next.litellm_session_id = sessionId;

@@ -89,6 +89,17 @@ export function shouldSuppressReasoningContent(modelId: string): boolean {
   return isMoonshotModel(modelId) && !FORCED_THINKING_MODEL_PATTERN.test(modelId);
 }
 
+function normalizeThinkingLevelMap(
+  map: Record<string, string | null> | undefined,
+): Record<string, string | null> | undefined {
+  if (!map) return undefined;
+  const result: Record<string, string | null> = {};
+  for (const [key, value] of Object.entries(map)) {
+    result[key] = typeof value === "string" ? value.toLowerCase() : value;
+  }
+  return result;
+}
+
 export function buildCompat(modelId: string): DiscoveredModel["compat"] {
   if (isMoonshotModel(modelId)) {
     return {
@@ -391,7 +402,9 @@ function mapFromModelInfo(entry: ModelInfoEntry): DiscoveredModel | undefined {
     id,
     name: id,
     reasoning: info.supports_reasoning ?? false,
-    ...(catalogModel?.thinkingLevelMap ? { thinkingLevelMap: catalogModel.thinkingLevelMap } : {}),
+    ...(catalogModel?.thinkingLevelMap
+      ? { thinkingLevelMap: normalizeThinkingLevelMap(catalogModel.thinkingLevelMap) }
+      : {}),
     input: info.supports_vision ? ["text", "image"] : ["text"],
     cost: mapModelInfoCost(info, catalogModel?.cost),
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
@@ -416,7 +429,7 @@ function mapFromHealthEndpoint(entry: { model?: string }): DiscoveredModel | und
     id,
     name: catalogModel?.name ?? id,
     reasoning: catalogModel?.reasoning ?? false,
-    thinkingLevelMap: catalogModel?.thinkingLevelMap,
+    thinkingLevelMap: normalizeThinkingLevelMap(catalogModel?.thinkingLevelMap),
     input: catalogModel?.input ?? ["text"],
     cost: catalogModel?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: catalogModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
@@ -437,7 +450,7 @@ function mapFromModelsList(
     id,
     name: modelsDevMetadata.name ?? catalogModel?.name ?? `${id} (no metadata)`,
     reasoning: modelsDevMetadata.reasoning ?? catalogModel?.reasoning ?? false,
-    thinkingLevelMap: catalogModel?.thinkingLevelMap,
+    thinkingLevelMap: normalizeThinkingLevelMap(catalogModel?.thinkingLevelMap),
     input: modelsDevMetadata.input ?? catalogModel?.input ?? ["text"],
     cost: modelsDevMetadata.cost ?? catalogModel?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: modelsDevMetadata.contextWindow ?? catalogModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,

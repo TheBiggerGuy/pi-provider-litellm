@@ -260,6 +260,21 @@ describe("discoverModels via /model/info", () => {
     expect(result.models[0]?.thinkingLevelMap).toMatchObject({ off: "none", xhigh: "xhigh", max: "max" });
   });
 
+  it("normalizes catalog thinkingLevelMap values to lowercase for Google/Gemini models", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: [{ model_name: "google/gemini-3.1-pro-preview", model_info: { mode: "chat" } }],
+      }),
+    );
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.thinkingLevelMap).toMatchObject({
+      low: "low",
+      high: "high",
+    });
+  });
+
   it("preserves richer metadata from later duplicate model ids", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = input instanceof URL ? input.toString() : String(input);

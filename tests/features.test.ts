@@ -1027,6 +1027,36 @@ describe("feature parity", () => {
     }
   });
 
+  it("normalizes capitalized reasoning effort values to lowercase", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { data: [] }));
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.(
+      {
+        payload: {
+          messages: [{ role: "user", content: "hello" }],
+          reasoning_effort: "HIGH",
+          reasoning: { effort: "HIGH", summary: "auto" },
+        },
+      },
+      { model: { provider: "litellm", id: "google/gemini-3.1-pro-preview" } },
+    );
+
+    expect(updated).toEqual({
+      messages: [{ role: "user", content: "hello" }],
+      reasoning_effort: "high",
+      reasoning: { effort: "high", summary: "auto" },
+    });
+  });
+
   it("normalizes Kimi think tags into Pi thinking blocks", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
