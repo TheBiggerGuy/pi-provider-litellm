@@ -11,7 +11,8 @@ import { createLiteLLMProvider, toNativeModels } from "../src/provider.js";
 import type { DiscoveryResult } from "../src/types.js";
 
 const apiSpies = vi.hoisted(() => ({ completions: vi.fn(), responses: vi.fn() }));
-vi.mock("@earendil-works/pi-ai/compat", () => ({
+vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@earendil-works/pi-ai/compat")>()),
   openAICompletionsApi: () => ({ stream: apiSpies.completions, streamSimple: apiSpies.completions }),
   openAIResponsesApi: () => ({ stream: apiSpies.responses, streamSimple: apiSpies.responses }),
 }));
@@ -110,6 +111,47 @@ describe("createLiteLLMProvider", () => {
 
     expect(value.getModels()).toEqual([native("stored")]);
     expect(discover).not.toHaveBeenCalled();
+  });
+
+  it("re-enriches stale cached catalog aliases offline without discovery", async () => {
+    const discover = vi.fn(async () => discovered("fresh"));
+    const value = controller({ discover });
+
+    await value.refreshModels?.(
+      context(
+        store([
+          {
+            ...native("opus-5"),
+            name: "opus-5 (no metadata)",
+            reasoning: false,
+          },
+        ]),
+        false,
+      ),
+    );
+
+    expect(value.getModels()).toEqual([
+      expect.objectContaining({
+        id: "opus-5",
+        name: "Claude Opus 5",
+        reasoning: true,
+        thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+        provider: "litellm",
+        api: "openai-completions",
+        baseUrl: "https://proxy.example/v1",
+      }),
+    ]);
+    expect(discover).not.toHaveBeenCalled();
+  });
+
+  it("keeps unknown stale cached models unchanged offline", async () => {
+    const discover = vi.fn(async () => discovered("fresh"));
+    const cached = { ...native("unknown-model"), name: "unknown-model (no metadata)" };
+    const value = controller({ discover });
+
+    await value.refreshModels?.(context(store([cached]), false));
+
+    expect(value.getModels()).toEqual([cached]);
   });
 
   it("publishes and persists successful discovery", async () => {

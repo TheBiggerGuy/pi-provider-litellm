@@ -131,6 +131,22 @@ function findCatalogModel(id: string, ownedBy?: string): Model<Api> | undefined 
   return undefined;
 }
 
+export function enrichCachedModel(model: Model<Api>): Model<Api> {
+  if (!model.name.endsWith(" (no metadata)")) return model;
+  const catalogModel = findCatalogModel(model.id);
+  if (!catalogModel) return model;
+  return {
+    ...model,
+    name: catalogModel.name,
+    reasoning: catalogModel.reasoning,
+    thinkingLevelMap: catalogModel.thinkingLevelMap,
+    input: catalogModel.input,
+    cost: catalogModel.cost,
+    contextWindow: catalogModel.contextWindow,
+    maxTokens: catalogModel.maxTokens,
+  };
+}
+
 function catalogLookupIds(id: string): string[] {
   const lookupIds = new Set([id]);
   const unprefixed = id.includes("/") ? id.slice(id.indexOf("/") + 1) : id;
