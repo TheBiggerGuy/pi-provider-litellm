@@ -706,6 +706,7 @@ const REASONING_SUPPRESSION_DEFAULTS: Record<string, unknown> = {
   merge_reasoning_content_in_choices: true,
   thinking: { type: "disabled" },
 };
+const GEMINI_MODEL_PATTERN = /(?:^|[-_/.:])gemini(?=$|[-_/.:])/i;
 
 function prepareLiteLLMRequestPayload(
   payload: Record<string, unknown>,
@@ -766,6 +767,29 @@ function prepareLiteLLMRequestPayload(
       if (normalized !== messages) {
         next ??= { ...payload };
         next.messages = normalized;
+      }
+    }
+  }
+
+  if (modelId && GEMINI_MODEL_PATTERN.test(modelId)) {
+    const currentPayload = next ?? payload;
+    if (typeof currentPayload.reasoning_effort === "string") {
+      const lower = currentPayload.reasoning_effort.toLowerCase();
+      if (currentPayload.reasoning_effort !== lower) {
+        next ??= { ...payload };
+        next.reasoning_effort = lower;
+      }
+    }
+
+    const reasoningPayload = next ?? payload;
+    if (isPlainObject(reasoningPayload.reasoning) && typeof reasoningPayload.reasoning.effort === "string") {
+      const lower = reasoningPayload.reasoning.effort.toLowerCase();
+      if (reasoningPayload.reasoning.effort !== lower) {
+        next ??= { ...payload };
+        next.reasoning = {
+          ...(next.reasoning as Record<string, unknown>),
+          effort: lower,
+        };
       }
     }
   }
