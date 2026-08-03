@@ -11,7 +11,8 @@ import { createLiteLLMProvider, toNativeModels } from "../src/provider.js";
 import type { DiscoveryResult } from "../src/types.js";
 
 const apiSpies = vi.hoisted(() => ({ completions: vi.fn(), responses: vi.fn() }));
-vi.mock("@earendil-works/pi-ai/compat", () => ({
+vi.mock("@earendil-works/pi-ai/compat", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@earendil-works/pi-ai/compat")>()),
   openAICompletionsApi: () => ({ stream: apiSpies.completions, streamSimple: apiSpies.completions }),
   openAIResponsesApi: () => ({ stream: apiSpies.responses, streamSimple: apiSpies.responses }),
 }));
@@ -52,6 +53,22 @@ function store(initial?: readonly Model<Api>[]) {
     }),
   };
   return value;
+}
+
+class PrototypeStore implements ProviderModelsStore {
+  entry: Awaited<ReturnType<ProviderModelsStore["read"]>>;
+
+  async read() {
+    return this.entry;
+  }
+
+  async write(entry: Parameters<ProviderModelsStore["write"]>[0]) {
+    this.entry = entry;
+  }
+
+  async delete() {
+    this.entry = undefined;
+  }
 }
 
 function context(modelsStore: ProviderModelsStore, allowNetwork: boolean): RefreshModelsContext {
@@ -112,6 +129,74 @@ describe("createLiteLLMProvider", () => {
     expect(discover).not.toHaveBeenCalled();
   });
 
+  it("re-enriches stale cached catalog aliases offline without discovery", async () => {
+    const discover = vi.fn(async () => discovered("fresh"));
+    const value = controller({ discover });
+
+    await value.refreshModels?.(
+      context(
+        store([
+          {
+            ...native("opus-5"),
+            name: "opus-5 (no metadata)",
+            reasoning: false,
+            maxTokens: 16_384,
+          },
+        ]),
+        false,
+      ),
+    );
+
+    expect(value.getModels()).toEqual([
+      expect.objectContaining({
+        id: "opus-5",
+        name: "Claude Opus 5",
+        reasoning: true,
+        thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+        provider: "litellm",
+        api: "openai-completions",
+        baseUrl: "https://proxy.example/v1",
+      }),
+    ]);
+    expect(discover).not.toHaveBeenCalled();
+  });
+
+  it("keeps partially enriched stale cached aliases unchanged offline", async () => {
+    const legacyFallback: Model<Api> = {
+      ...native("opus-5"),
+      name: "opus-5 (no metadata)",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 16_384,
+    };
+    const partialCached: Model<Api>[] = [
+      { ...legacyFallback, reasoning: true },
+      { ...legacyFallback, input: ["text", "image"] },
+      { ...legacyFallback, cost: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      { ...legacyFallback, contextWindow: 128_001 },
+      { ...legacyFallback, maxTokens: 16_385 },
+    ];
+    for (const cached of partialCached) {
+      const value = controller();
+
+      await value.refreshModels?.(context(store([cached]), false));
+
+      expect(value.getModels()).toEqual([cached]);
+    }
+  });
+
+  it("keeps unknown stale cached models unchanged offline", async () => {
+    const discover = vi.fn(async () => discovered("fresh"));
+    const cached = { ...native("unknown-model"), name: "unknown-model (no metadata)" };
+    const value = controller({ discover });
+
+    await value.refreshModels?.(context(store([cached]), false));
+
+    expect(value.getModels()).toEqual([cached]);
+  });
+
   it("publishes and persists successful discovery", async () => {
     const modelsStore = store([native("old")]);
     const value = controller({ discover: vi.fn(async () => discovered("fresh")) });
@@ -121,6 +206,16 @@ describe("createLiteLLMProvider", () => {
     expect(value.getModels()).toEqual([native("fresh")]);
     expect(modelsStore.write).toHaveBeenCalledOnce();
     expect(modelsStore.write).toHaveBeenCalledWith(expect.objectContaining({ models: [native("fresh")] }));
+  });
+
+  it("persists online discovery through a prototype-backed store", async () => {
+    const modelsStore = new PrototypeStore();
+    const value = controller({ discover: vi.fn(async () => discovered("fresh")) });
+
+    await value.refreshModels?.(context(modelsStore, true));
+
+    expect(value.getModels()).toEqual([native("fresh")]);
+    expect(modelsStore.entry?.models).toEqual([native("fresh")]);
   });
 
   it("publishes discovered models with the credential URL", async () => {

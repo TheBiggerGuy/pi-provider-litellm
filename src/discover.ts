@@ -131,6 +131,38 @@ function findCatalogModel(id: string, ownedBy?: string): Model<Api> | undefined 
   return undefined;
 }
 
+export function enrichCachedModel(model: Model<Api>): Model<Api> {
+  // ponytail: legacy cache lacks field provenance; add per-field cache provenance if strict preservation becomes necessary.
+  if (
+    !model.name.endsWith(" (no metadata)") ||
+    model.reasoning ||
+    model.thinkingLevelMap !== undefined ||
+    model.input.length !== 1 ||
+    model.input[0] !== "text" ||
+    model.cost.input !== 0 ||
+    model.cost.output !== 0 ||
+    model.cost.cacheRead !== 0 ||
+    model.cost.cacheWrite !== 0 ||
+    model.cost.tiers !== undefined ||
+    model.contextWindow !== DEFAULT_CONTEXT_WINDOW ||
+    model.maxTokens !== DEFAULT_MAX_TOKENS
+  ) {
+    return model;
+  }
+  const catalogModel = findCatalogModel(model.id);
+  if (!catalogModel) return model;
+  return {
+    ...model,
+    name: catalogModel.name,
+    reasoning: catalogModel.reasoning,
+    thinkingLevelMap: catalogModel.thinkingLevelMap,
+    input: catalogModel.input,
+    cost: catalogModel.cost,
+    contextWindow: catalogModel.contextWindow,
+    maxTokens: catalogModel.maxTokens,
+  };
+}
+
 function catalogLookupIds(id: string): string[] {
   const lookupIds = new Set([id]);
   const unprefixed = id.includes("/") ? id.slice(id.indexOf("/") + 1) : id;

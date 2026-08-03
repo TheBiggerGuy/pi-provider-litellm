@@ -1,5 +1,6 @@
 import { type Credential, createProvider, type Model, type Provider, type ProviderAuth } from "@earendil-works/pi-ai";
 import { openAICompletionsApi, openAIResponsesApi } from "@earendil-works/pi-ai/compat";
+import { enrichCachedModel } from "./discover.js";
 import type { DiscoveredModel, DiscoveryResult, LiteLLMApi } from "./types.js";
 
 export type LiteLLMProviderOptions = {
@@ -24,7 +25,7 @@ export function toNativeModels(
 }
 
 export function createLiteLLMProvider(options: LiteLLMProviderOptions): Provider<LiteLLMApi> {
-  return createProvider<LiteLLMApi>({
+  const provider = createProvider<LiteLLMApi>({
     id: options.id,
     name: options.name,
     baseUrl: options.baseUrl,
@@ -40,4 +41,21 @@ export function createLiteLLMProvider(options: LiteLLMProviderOptions): Provider
       "openai-responses": openAIResponsesApi(),
     },
   });
+  const refreshModels = provider.refreshModels;
+  if (!refreshModels) return provider;
+  return {
+    ...provider,
+    refreshModels: (context) =>
+      refreshModels({
+        ...context,
+        store: {
+          async read() {
+            const entry = await context.store.read();
+            return entry && { ...entry, models: entry.models.map(enrichCachedModel) };
+          },
+          write: (entry) => context.store.write(entry),
+          delete: () => context.store.delete(),
+        },
+      }),
+  };
 }
