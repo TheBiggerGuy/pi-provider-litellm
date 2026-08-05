@@ -52,6 +52,10 @@ describe("pi package compatibility", () => {
 
     expect(manifest.peerDependencies["@earendil-works/pi-ai"]).toBe(">=0.81.0");
     expect(manifest.peerDependencies["@earendil-works/pi-coding-agent"]).toBe(">=0.81.0");
+    expect(manifest.peerDependenciesMeta).toEqual({
+      "@earendil-works/pi-ai": { optional: true },
+      "@earendil-works/pi-coding-agent": { optional: true },
+    });
     expect(manifest.devDependencies["@earendil-works/pi-ai"]).toBe("^0.83.0");
     expect(manifest.devDependencies["@earendil-works/pi-coding-agent"]).toBe("^0.83.0");
   });
