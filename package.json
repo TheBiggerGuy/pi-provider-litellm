@@ -58,10 +58,18 @@
     "@earendil-works/pi-ai": ">=0.81.0",
     "@earendil-works/pi-coding-agent": ">=0.81.0"
   },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
   "overrides": {
     "basic-ftp": "6.0.1",
-    "fast-xml-builder": "1.2.0",
-    "protobufjs": "8.7.1"
+    "protobufjs": "8.7.1",
+    "undici": "8.9.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
