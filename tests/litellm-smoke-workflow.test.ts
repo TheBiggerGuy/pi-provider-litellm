@@ -17,6 +17,10 @@ function readReleaseWorkflow(): string {
   return readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
 }
 
+function readReleaseAllowedSigners(): string {
+  return readFileSync(resolve(repoRoot, ".github/release-allowed-signers"), "utf8");
+}
+
 function readReadme(): string {
   return readFileSync(resolve(repoRoot, "README.md"), "utf8");
 }
@@ -155,10 +159,12 @@ describe("LiteLLM smoke workflow", () => {
     expect(release).toContain("git fetch --no-tags origin main");
     expect(release).toContain('gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME"');
     expect(release).toContain('test "$(jq -r .verification.verified <<<"$tag")" = true');
+    expect(release).toContain("gpg.ssh.allowedSignersFile=.github/release-allowed-signers verify-tag");
     expect(release).toContain('git rev-parse "$GITHUB_REF_NAME^{}"');
     expect(release).toContain('git merge-base --is-ancestor "$GITHUB_SHA" origin/main');
     expect(release).toContain("packageVersion=$(node -p \"require('./package.json').version\")");
     expect(release).toContain(`test "\${GITHUB_REF_NAME#v}" = "$packageVersion"`);
+    expect(readReleaseAllowedSigners()).toMatch(/^balcsida@gmail\.com ssh-ed25519 [A-Za-z0-9+/=]+\n$/);
   });
 
   it("preserves the workflow environment in the terminal smoke", () => {

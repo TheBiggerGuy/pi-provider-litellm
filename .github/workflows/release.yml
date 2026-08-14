@@ -32,6 +32,7 @@ jobs:
           tag=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$(jq -r .object.sha <<<"$ref")")
           test "$(jq -r .verification.verified <<<"$tag")" = true
           test "$(jq -r .object.sha <<<"$tag")" = "$GITHUB_SHA"
+          git -c gpg.format=ssh -c gpg.ssh.allowedSignersFile=.github/release-allowed-signers verify-tag "$GITHUB_REF_NAME"
           tagCommit=$(git rev-parse "$GITHUB_REF_NAME^{}")
           test "$tagCommit" = "$GITHUB_SHA"
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
