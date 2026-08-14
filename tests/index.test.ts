@@ -4,8 +4,9 @@ import { join } from "node:path";
 import type {
   AuthInteraction,
   Credential,
+  ModelsStore,
+  ModelsStoreEntry,
   Provider,
-  ProviderModelsStore,
   RefreshModelsContext,
 } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -68,12 +69,11 @@ async function readHelperCount(agentDir: string): Promise<number> {
   }
 }
 
-function createModelsStore(models: readonly any[] = []): ProviderModelsStore {
-  let entry: Awaited<ReturnType<ProviderModelsStore["read"]>> =
-    models.length > 0 ? { models, checkedAt: Date.now() } : undefined;
+function createModelsStore(models: readonly any[] = []): ModelsStore {
+  let entry: ModelsStoreEntry | undefined = models.length > 0 ? { models, checkedAt: Date.now() } : undefined;
   return {
     read: async () => entry,
-    write: async (next) => {
+    write: async (_providerId, next) => {
       entry = next;
     },
     delete: async () => {
@@ -84,11 +84,24 @@ function createModelsStore(models: readonly any[] = []): ProviderModelsStore {
 
 async function refreshProvider(
   provider: Provider,
-  options: Omit<RefreshModelsContext, "store"> & { store?: ProviderModelsStore },
+  options: Omit<RefreshModelsContext, "publish" | "signal" | "stored"> & { store?: ModelsStore },
 ): Promise<readonly unknown[]> {
-  await provider.refreshModels?.({ ...options, store: options.store ?? createModelsStore() });
+  const store = options.store ?? createModelsStore();
+  await provider.refreshModels?.({
+    ...options,
+    stored: await store.read(provider.id),
+    publish: async ({ persist, update }) => {
+      if (persist === null) await store.delete(provider.id);
+      else if (persist) await store.write(provider.id, persist);
+      update?.();
+      return true;
+    },
+    signal: new AbortController().signal,
+  });
   return provider.getModels();
 }
+
+const TEST_SIGNAL = new AbortController().signal;
 
 function resolveApiKey(provider: Provider, credential?: Extract<Credential, { type: "api_key" }>) {
   return provider.auth.apiKey?.resolve({
@@ -97,20 +110,22 @@ function resolveApiKey(provider: Provider, credential?: Extract<Credential, { ty
       env: async (name) => process.env[name],
       fileExists: async () => false,
     },
+    signal: TEST_SIGNAL,
   });
 }
 
 function resolveApiKeyWithEnv(provider: Provider, env: Record<string, string | undefined>) {
   return provider.auth.apiKey?.resolve({
     ctx: { env: async (name) => env[name], fileExists: async () => false },
+    signal: TEST_SIGNAL,
   });
 }
 
 function interaction(
   prompt: AuthInteraction["prompt"],
   notify: AuthInteraction["notify"] = vi.fn(),
-  signal?: AbortSignal,
-): AuthInteraction {
+  signal: AbortSignal = TEST_SIGNAL,
+): AuthInteraction & { signal: AbortSignal } {
   return { prompt, notify, signal };
 }
 
@@ -134,7 +149,7 @@ async function loginOAuth(
         if (event.type === "auth_url") callbacks.onAuth?.(event);
         if (event.type === "progress") callbacks.onProgress?.(event.message);
       },
-      callbacks.signal,
+      callbacks.signal ?? TEST_SIGNAL,
     ),
   );
 }
@@ -525,6 +540,7 @@ describe("extension startup", () => {
 
     const result = await pi.providers[0]?.auth.apiKey?.check?.({
       ctx: { env: async (name) => process.env[name], fileExists: async () => false },
+      signal: TEST_SIGNAL,
     });
 
     expect(result).toEqual({ type: "api_key", source: "LITELLM_API_KEY_HELPER" });
@@ -775,7 +791,7 @@ describe("extension startup", () => {
       baseUrl: "https://litellm.example.com",
     };
 
-    const refreshed = await pi.providers[0]?.auth.oauth?.refresh(credential);
+    const refreshed = await pi.providers[0]?.auth.oauth?.refresh(credential, TEST_SIGNAL);
     expect(await readHelperCount(agentDir)).toBe(1);
     await expect(pi.providers[0]?.auth.oauth?.toAuth(refreshed!)).resolves.toMatchObject({
       apiKey: "refreshed-token",
@@ -1089,7 +1105,7 @@ describe("extension startup", () => {
       signal: new AbortController().signal,
     });
 
-    await expect(pi.providers[0]?.auth.oauth?.refresh(credential!)).rejects.toThrow(
+    await expect(pi.providers[0]?.auth.oauth?.refresh(credential!, TEST_SIGNAL)).rejects.toThrow(
       "LiteLLM credential cannot be refreshed; run /login litellm again",
     );
   });

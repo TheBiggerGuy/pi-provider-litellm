@@ -1,7 +1,6 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ProviderModelsStore } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPi, loadExtension, type TestPi } from "./test-helpers.js";
 
@@ -15,20 +14,16 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 async function refreshProvider(pi: TestPi, allowNetwork = true, signal?: AbortSignal): Promise<void> {
-  const store: ProviderModelsStore = {
-    read: async () => undefined,
-    write: async () => undefined,
-    delete: async () => undefined,
-  };
   await pi.providers[0]?.refreshModels?.({
     allowNetwork,
-    store,
+    stored: undefined,
+    publish: async () => true,
     credential: {
       type: "api_key",
       key: process.env.LITELLM_API_KEY ?? "sk-test",
       env: { LITELLM_BASE_URL: process.env.LITELLM_BASE_URL ?? "https://litellm.example.com" },
     },
-    signal,
+    signal: signal ?? new AbortController().signal,
   });
 }
 
@@ -69,6 +64,7 @@ describe("feature parity", () => {
     await expect(
       pi.providers[0]?.auth.apiKey?.check?.({
         ctx: { env: async (name) => process.env[name], fileExists: async () => false },
+        signal: new AbortController().signal,
       }),
     ).resolves.toEqual({ type: "api_key", source: "gcloud ADC" });
   });
@@ -208,7 +204,7 @@ describe("feature parity", () => {
     await Promise.all([firstRefresh, secondRefresh]);
   });
 
-  it("lets a live different-identity refresh continue after the active refresh aborts", async () => {
+  it("continues a different-identity background refresh after the active refresh aborts", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     const firstAbort = new AbortController();
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -243,6 +239,7 @@ describe("feature parity", () => {
     await vi.waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith("https://first.example.com/mcp-rest/tools/list", expect.anything()),
     );
+    await expect(firstRefresh).resolves.toBeUndefined();
 
     process.env.LITELLM_BASE_URL = "https://second.example.com";
     process.env.LITELLM_API_KEY = "second-token";
@@ -252,13 +249,14 @@ describe("feature parity", () => {
     );
     firstAbort.abort(new Error("first refresh cancelled"));
 
-    await expect(firstRefresh).rejects.toThrow("first refresh cancelled");
     await expect(secondRefresh).resolves.toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledWith("https://second.example.com/mcp-rest/tools/list", expect.anything());
-    expect(pi.tools.map((tool) => tool.name)).toContain("mcp_second_second");
+    await vi.waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("https://second.example.com/mcp-rest/tools/list", expect.anything()),
+    );
+    await vi.waitFor(() => expect(pi.tools.map((tool) => tool.name)).toContain("mcp_second_second"));
   });
 
-  it("rejects an aborted same-identity MCP waiter with its own reason", async () => {
+  it("does not block model refresh on an aborted same-identity MCP waiter", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     const secondAbort = new AbortController();
     let resolveCatalog: (response: Response) => void = () => {};
@@ -291,14 +289,7 @@ describe("feature parity", () => {
     const reason = new Error("second refresh cancelled");
     secondAbort.abort(reason);
     try {
-      const outcome = await Promise.race([
-        secondRefresh.then(
-          () => "resolved",
-          (error: unknown) => error,
-        ),
-        new Promise((resolve) => setTimeout(() => resolve("pending"), 50)),
-      ]);
-      expect(outcome).toBe(reason);
+      await expect(secondRefresh).resolves.toBeUndefined();
     } finally {
       resolveCatalog(jsonResponse(200, []));
       await firstRefresh;

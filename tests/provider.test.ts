@@ -2,8 +2,8 @@ import type {
   Api,
   Credential,
   Model,
+  ModelsPublication,
   ProviderAuth,
-  ProviderModelsStore,
   RefreshModelsContext,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
@@ -41,38 +41,22 @@ function native(id: string): Model<"openai-completions" | "openai-responses"> {
   return toNativeModels("litellm", "https://proxy.example/v1", discovered(id).models)[0];
 }
 
-function store(initial?: readonly Model<Api>[]) {
-  let entry = initial ? { models: initial, checkedAt: 1 } : undefined;
-  const value: ProviderModelsStore = {
-    read: vi.fn(async () => entry),
-    write: vi.fn(async (next) => {
-      entry = next;
+type TestRefreshContext = RefreshModelsContext & { publications: ModelsPublication[] };
+
+function context(initial: readonly Model<Api>[] | undefined, allowNetwork: boolean): TestRefreshContext {
+  const publications: ModelsPublication[] = [];
+  return {
+    stored: initial ? { models: initial, checkedAt: 1 } : undefined,
+    allowNetwork,
+    credential,
+    signal: new AbortController().signal,
+    publish: vi.fn(async (publication) => {
+      publications.push(publication);
+      publication.update?.();
+      return true;
     }),
-    delete: vi.fn(async () => {
-      entry = undefined;
-    }),
+    publications,
   };
-  return value;
-}
-
-class PrototypeStore implements ProviderModelsStore {
-  entry: Awaited<ReturnType<ProviderModelsStore["read"]>>;
-
-  async read() {
-    return this.entry;
-  }
-
-  async write(entry: Parameters<ProviderModelsStore["write"]>[0]) {
-    this.entry = entry;
-  }
-
-  async delete() {
-    this.entry = undefined;
-  }
-}
-
-function context(modelsStore: ProviderModelsStore, allowNetwork: boolean): RefreshModelsContext {
-  return { store: modelsStore, allowNetwork, credential };
 }
 
 function controller(overrides: Partial<Parameters<typeof createLiteLLMProvider>[0]> = {}) {
@@ -110,20 +94,11 @@ describe("toNativeModels", () => {
 });
 
 describe("createLiteLLMProvider", () => {
-  it("delegates native store restoration directly to createProvider", async () => {
-    const modelsStore = store([native("stored")]);
-    const value = controller();
-
-    await value.refreshModels?.(context(modelsStore, false));
-
-    expect(modelsStore.read).toHaveBeenCalledOnce();
-  });
-
   it("restores stored models offline without discovery", async () => {
     const discover = vi.fn(async () => discovered("fresh"));
     const value = controller({ discover });
 
-    await value.refreshModels?.(context(store([native("stored")]), false));
+    await value.refreshModels?.(context([native("stored")], false));
 
     expect(value.getModels()).toEqual([native("stored")]);
     expect(discover).not.toHaveBeenCalled();
@@ -135,14 +110,14 @@ describe("createLiteLLMProvider", () => {
 
     await value.refreshModels?.(
       context(
-        store([
+        [
           {
             ...native("opus-5"),
             name: "opus-5 (no metadata)",
             reasoning: false,
             maxTokens: 16_384,
           },
-        ]),
+        ],
         false,
       ),
     );
@@ -181,7 +156,7 @@ describe("createLiteLLMProvider", () => {
     for (const cached of partialCached) {
       const value = controller();
 
-      await value.refreshModels?.(context(store([cached]), false));
+      await value.refreshModels?.(context([cached], false));
 
       expect(value.getModels()).toEqual([cached]);
     }
@@ -192,30 +167,22 @@ describe("createLiteLLMProvider", () => {
     const cached = { ...native("unknown-model"), name: "unknown-model (no metadata)" };
     const value = controller({ discover });
 
-    await value.refreshModels?.(context(store([cached]), false));
+    await value.refreshModels?.(context([cached], false));
 
     expect(value.getModels()).toEqual([cached]);
   });
 
   it("publishes and persists successful discovery", async () => {
-    const modelsStore = store([native("old")]);
+    const refreshContext = context([native("old")], true);
     const value = controller({ discover: vi.fn(async () => discovered("fresh")) });
 
-    await value.refreshModels?.(context(modelsStore, true));
+    await value.refreshModels?.(refreshContext);
 
     expect(value.getModels()).toEqual([native("fresh")]);
-    expect(modelsStore.write).toHaveBeenCalledOnce();
-    expect(modelsStore.write).toHaveBeenCalledWith(expect.objectContaining({ models: [native("fresh")] }));
-  });
-
-  it("persists online discovery through a prototype-backed store", async () => {
-    const modelsStore = new PrototypeStore();
-    const value = controller({ discover: vi.fn(async () => discovered("fresh")) });
-
-    await value.refreshModels?.(context(modelsStore, true));
-
-    expect(value.getModels()).toEqual([native("fresh")]);
-    expect(modelsStore.entry?.models).toEqual([native("fresh")]);
+    expect(refreshContext.publications.at(-1)?.persist).toEqual({
+      models: [native("fresh")],
+      checkedAt: expect.any(Number),
+    });
   });
 
   it("publishes discovered models with the credential URL", async () => {
@@ -226,26 +193,26 @@ describe("createLiteLLMProvider", () => {
       })),
     });
 
-    await value.refreshModels?.(context(store(), true));
+    await value.refreshModels?.(context(undefined, true));
 
     expect(value.getModels()[0]?.baseUrl).toBe("https://credential.example/v1");
   });
 
   it("retains previous models when discovery rejects", async () => {
-    const modelsStore = store([native("old")]);
+    const refreshContext = context([native("old")], true);
     const discover = vi.fn(async () => {
       throw new Error("rejected");
     });
     const value = controller({ discover });
 
-    await expect(value.refreshModels?.(context(modelsStore, true))).rejects.toThrow("rejected");
+    await expect(value.refreshModels?.(refreshContext)).rejects.toThrow("rejected");
 
     expect(value.getModels()).toEqual([native("old")]);
-    expect(modelsStore.write).not.toHaveBeenCalled();
+    expect(refreshContext.publications.every((publication) => publication.persist === undefined)).toBe(true);
   });
 
   it("retains previous models when discovery is aborted", async () => {
-    const modelsStore = store([native("old")]);
+    const refreshContext = context([native("old")], true);
     const abort = new AbortController();
     const discover = vi.fn(async () => {
       abort.abort();
@@ -253,27 +220,10 @@ describe("createLiteLLMProvider", () => {
     });
     const value = controller({ discover });
 
-    await value.refreshModels?.({ ...context(modelsStore, true), signal: abort.signal });
+    await value.refreshModels?.({ ...refreshContext, signal: abort.signal });
 
     expect(value.getModels()).toEqual([native("old")]);
-    expect(modelsStore.write).not.toHaveBeenCalled();
-  });
-
-  it("shares one discovery across concurrent refreshes", async () => {
-    let release!: (result: DiscoveryResult) => void;
-    const pending = new Promise<DiscoveryResult>((resolve) => {
-      release = resolve;
-    });
-    const discover = vi.fn(() => pending);
-    const modelsStore = store([native("old")]);
-    const value = controller({ discover });
-
-    const first = value.refreshModels?.(context(modelsStore, true));
-    const second = value.refreshModels?.(context(modelsStore, true));
-    release(discovered("fresh"));
-    await Promise.all([first, second]);
-
-    expect(discover).toHaveBeenCalledOnce();
+    expect(refreshContext.publications.every((publication) => publication.persist === undefined)).toBe(true);
   });
 
   it("routes Responses models through the Responses API", async () => {

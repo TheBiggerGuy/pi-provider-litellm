@@ -48,14 +48,7 @@ export function createLiteLLMProvider(options: LiteLLMProviderOptions): Provider
     refreshModels: (context) =>
       refreshModels({
         ...context,
-        store: {
-          async read() {
-            const entry = await context.store.read();
-            return entry && { ...entry, models: entry.models.map(enrichCachedModel) };
-          },
-          write: (entry) => context.store.write(entry),
-          delete: () => context.store.delete(),
-        },
+        stored: context.stored && { ...context.stored, models: context.stored.models.map(enrichCachedModel) },
       }),
   };
 }
