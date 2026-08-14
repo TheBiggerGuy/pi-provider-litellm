@@ -54,7 +54,8 @@ const modelsDevRefreshes = new Map<string, Promise<ModelsDevResponse | undefined
 export function normalizeBaseUrl(input: string): string {
   const url = new URL(input);
   const hostname = url.hostname.toLowerCase();
-  const loopback = hostname === "localhost" || hostname === "[::1]" || (isIP(hostname) === 4 && hostname.startsWith("127."));
+  const loopback =
+    hostname === "localhost" || hostname === "[::1]" || (isIP(hostname) === 4 && hostname.startsWith("127."));
   if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
     throw new Error("LiteLLM base URL must use HTTPS except for loopback hosts");
   }

@@ -104,7 +104,7 @@ describe("LiteLLM smoke workflow", () => {
 
   it("selects the unlicensed image for pull requests", () => {
     expect(readWorkflow()).toContain(
-        "LITELLM_IMAGE: $" +
+      "LITELLM_IMAGE: $" +
         "{{ github.event_name != 'pull_request' && secrets.LITELLM_LICENSE != '' && 'docker.litellm.ai/berriai/litellm-database@sha256:8b229a4b48fbe62d7f994b502106c3c1dbab958c07934fb446ac0e048a62745e' || 'docker.litellm.ai/berriai/litellm@sha256:f2dc9ba8a62cf2c51e3ed00e6975f4c70bb577b8ef0c2d7040e3228dc7d42b09' }}",
     );
   });
@@ -155,8 +155,8 @@ describe("LiteLLM smoke workflow", () => {
     expect(release).toContain('test "$(jq -r .verification.verified <<<"$tag")" = true');
     expect(release).toContain('git rev-parse "$GITHUB_REF_NAME^{}"');
     expect(release).toContain('git merge-base --is-ancestor "$GITHUB_SHA" origin/main');
-    expect(release).toContain('packageVersion=$(node -p "require(\'./package.json\').version")');
-    expect(release).toContain('test "${GITHUB_REF_NAME#v}" = "$packageVersion"');
+    expect(release).toContain("packageVersion=$(node -p \"require('./package.json').version\")");
+    expect(release).toContain(`test "\${GITHUB_REF_NAME#v}" = "$packageVersion"`);
   });
 
   it("preserves the workflow environment in the terminal smoke", () => {
