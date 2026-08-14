@@ -132,7 +132,9 @@ describe("LiteLLM smoke workflow", () => {
 
     expect(workflow).toMatch(/permissions:\n {2}contents: read/);
     expect(workflow).toMatch(/VIDAIMOCK_VERSION: v\d+\.\d+\.\d+$/m);
-    expect(workflow).toMatch(/sha256sum -c "\$\{asset%\.tar\.gz\}\.sha256"/);
+    expect(workflow).toContain("VIDAIMOCK_SHA256: 3095dd2794b6bd3623057beb1c7def22ae366b85121acb72b3c92a54f79eb7fe");
+    expect(workflow).toContain(`printf '%s  %s\\n' "$VIDAIMOCK_SHA256" "$asset" | sha256sum -c -`);
+    expect(workflow).not.toContain("$" + "{asset%.tar.gz}.sha256");
   });
 
   it("uses immutable container image references and script-free installs", () => {
