@@ -35,13 +35,14 @@ jobs:
       LITELLM_MASTER_KEY: sk-ci-litellm-smoke
       LITELLM_LICENSE: ${{ github.event_name != 'pull_request' && secrets.LITELLM_LICENSE || '' }}
       LITELLM_DATABASE_URL: postgresql://litellm:litellm@host.docker.internal:5432/litellm
-      LITELLM_IMAGE: ${{ github.event_name != 'pull_request' && secrets.LITELLM_LICENSE != '' && 'docker.litellm.ai/berriai/litellm-database:main-latest' || 'docker.litellm.ai/berriai/litellm:main-latest' }}
+      LITELLM_IMAGE: ${{ github.event_name != 'pull_request' && secrets.LITELLM_LICENSE != '' && 'docker.litellm.ai/berriai/litellm-database@sha256:8b229a4b48fbe62d7f994b502106c3c1dbab958c07934fb446ac0e048a62745e' || 'docker.litellm.ai/berriai/litellm@sha256:f2dc9ba8a62cf2c51e3ed00e6975f4c70bb577b8ef0c2d7040e3228dc7d42b09' }}
       LITELLM_SMOKE_MODELS: vidaimock-openai anthropic/vidaimock-claude
       LITELLM_SMOKE_EXPECT_SOURCE: model_info
       LITELLM_CLI_SMOKE_MODEL: vidaimock-openai
       LITELLM_CLI_SMOKE_MODEL_ANTHROPIC: anthropic/vidaimock-claude
       VIDAIMOCK_BASE_URL: http://127.0.0.1:8100
       VIDAIMOCK_VERSION: v0.2.7
+      VIDAIMOCK_SHA256: 3095dd2794b6bd3623057beb1c7def22ae366b85121acb72b3c92a54f79eb7fe
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,7 +52,7 @@ jobs:
           node-version: '26.5.0'
           cache: 'npm'
 
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
 
       - name: Install VidaiMock
@@ -64,10 +65,7 @@ jobs:
           curl -fsSL \
             "https://github.com/vidaiUK/VidaiMock/releases/download/${VIDAIMOCK_VERSION}/${asset}" \
             -o ".tmp/${asset}"
-          curl -fsSL \
-            "https://github.com/vidaiUK/VidaiMock/releases/download/${VIDAIMOCK_VERSION}/${asset%.tar.gz}.sha256" \
-            -o ".tmp/${asset%.tar.gz}.sha256"
-          (cd .tmp && sha256sum -c "${asset%.tar.gz}.sha256")
+          (cd .tmp && printf '%s  %s\n' "$VIDAIMOCK_SHA256" "$asset" | sha256sum -c -)
           tar -xzf ".tmp/${asset}" -C .tmp
           install -m 0755 .tmp/vidaimock/vidaimock .tmp/bin/vidaimock
           .tmp/bin/vidaimock --version
@@ -107,7 +105,7 @@ jobs:
             -e POSTGRES_PASSWORD=litellm \
             -e POSTGRES_DB=litellm \
             -p 5432:5432 \
-            postgres:16-alpine
+            postgres:16-alpine@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
 
       - name: Wait for LiteLLM smoke database
         if: ${{ env.LITELLM_LICENSE != '' }}

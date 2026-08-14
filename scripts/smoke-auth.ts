@@ -37,15 +37,6 @@ type SmokePi = {
   on: () => void;
 };
 
-async function readErrorBody(response: Response): Promise<string> {
-  try {
-    const body = await response.text();
-    return body ? `: ${body.slice(0, 500)}` : "";
-  } catch {
-    return "";
-  }
-}
-
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
@@ -69,13 +60,13 @@ function isAuthFailure(status: number): boolean {
 
 async function expectAuthFailure(label: string, response: Response): Promise<void> {
   if (!isAuthFailure(response.status)) {
-    throw new Error(`${label} should reject auth, got ${response.status}${await readErrorBody(response)}`);
+    throw new Error(`${label} should reject auth, got ${response.status}`);
   }
 }
 
 async function expectOk(label: string, response: Response): Promise<void> {
   if (!response.ok) {
-    throw new Error(`${label} returned ${response.status}${await readErrorBody(response)}`);
+    throw new Error(`${label} returned ${response.status}`);
   }
 }
 

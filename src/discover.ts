@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { isIP } from "node:net";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import type { BuiltinProvider } from "@earendil-works/pi-ai/providers/all";
@@ -51,6 +52,13 @@ const modelsDevCaches = new Map<string, ModelsDevCacheFile>();
 const modelsDevRefreshes = new Map<string, Promise<ModelsDevResponse | undefined>>();
 
 export function normalizeBaseUrl(input: string): string {
+  const url = new URL(input);
+  const hostname = url.hostname.toLowerCase();
+  const loopback =
+    hostname === "localhost" || hostname === "[::1]" || (isIP(hostname) === 4 && hostname.startsWith("127."));
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    throw new Error("LiteLLM base URL must use HTTPS except for loopback hosts");
+  }
   return input.replace(/\/+$/, "").replace(/\/v1\/?$/i, "");
 }
 

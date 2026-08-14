@@ -49,15 +49,6 @@ export function parseSmokeModels(raw: string | undefined): string[] {
     .filter((model) => model.length > 0);
 }
 
-async function readErrorBody(response: Response): Promise<string> {
-  try {
-    const body = await response.text();
-    return body ? `: ${body.slice(0, 500)}` : "";
-  } catch {
-    return "";
-  }
-}
-
 export async function smokeChatCompletion(
   baseUrl: string,
   apiKey: string,
@@ -80,7 +71,7 @@ export async function smokeChatCompletion(
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
-    throw new Error(`/v1/chat/completions for ${modelId} returned ${response.status}${await readErrorBody(response)}`);
+    throw new Error(`/v1/chat/completions for ${modelId} returned ${response.status}`);
   }
   const data = (await response.json()) as ChatCompletionResponse;
   const content = data.choices?.[0]?.message?.content;

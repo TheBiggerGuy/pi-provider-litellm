@@ -92,6 +92,7 @@ describe("dependency security overrides", () => {
     // basic-ftp left the dependency tree entirely; its override is vestigial.
     expect(Object.values(copiesOf("basic-ftp")).every((version) => version === "6.0.1")).toBe(true);
     expect(Object.values(copiesOf("brace-expansion"))).toEqual(["5.0.9"]);
+    expect(Object.values(copiesOf("nanoid"))).toEqual(["3.3.18"]);
     expect(Object.values(copiesOf("undici"))).toEqual(["8.9.0"]);
     // Pi 0.84.2 still ships a nested protobufjs 7.x copy.
     expect(copiesOf("protobufjs")).toEqual({
