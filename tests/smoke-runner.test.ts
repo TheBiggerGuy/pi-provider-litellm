@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseSmokeModels, runSmoke, runSmokeFromEnv, smokeChatCompletion } from "../scripts/smoke-runner.js";
+import {
+  parseSmokeModels,
+  redactErrorBody,
+  runSmoke,
+  runSmokeFromEnv,
+  smokeChatCompletion,
+} from "../scripts/smoke-runner.js";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -26,6 +32,13 @@ describe("parseSmokeModels", () => {
     expect(parseSmokeModels(undefined)).toEqual([]);
     expect(parseSmokeModels(" \n ,, \t ")).toEqual([]);
   });
+});
+
+it("redacts credential fields in JSON error bodies", () => {
+  const body = redactErrorBody('{"api_key":"plain-provider-secret","token":"plain-virtual-secret"}');
+
+  expect(body).not.toContain("plain-provider-secret");
+  expect(body).not.toContain("plain-virtual-secret");
 });
 
 describe("smokeChatCompletion", () => {
@@ -262,6 +275,43 @@ describe("runSmoke", () => {
         timeoutMs: 1000,
       }),
     ).rejects.toThrow(/\/v1\/chat\/completions for github-models-openai returned 429.*rate limited/);
+  });
+
+  it("redacts credential-shaped values from provider response bodies", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [{ model_name: "github-models-openai", model_info: { mode: "chat" } }],
+        });
+      }
+      if (url.endsWith("/v1/chat/completions")) {
+        return Response.json(
+          {
+            authorization: "Bearer sk-live-secret",
+            api_key: "plain-provider-secret",
+            jwt: "eyJhbGciOiJub25l.eyJzdWIiOiIxMjMifQ.sig",
+          },
+          { status: 500 },
+        );
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    await expect(
+      runSmoke({
+        baseUrl: "http://127.0.0.1:4000",
+        apiKey: "sk-smoke",
+        modelIds: ["github-models-openai"],
+        timeoutMs: 1000,
+      }),
+    ).rejects.toSatisfy((error: Error) => {
+      expect(error.message).toContain("returned 500");
+      expect(error.message).not.toContain("sk-live-secret");
+      expect(error.message).not.toContain("plain-provider-secret");
+      expect(error.message).not.toContain("eyJhbGciOiJub25l");
+      return error.message.length < 600;
+    });
   });
 });
 

@@ -49,10 +49,21 @@ export function parseSmokeModels(raw: string | undefined): string[] {
     .filter((model) => model.length > 0);
 }
 
-async function readErrorBody(response: Response): Promise<string> {
+export function redactErrorBody(body: string): string {
+  return body
+    .replace(/(Bearer\s+)[^"',\s}\]]+/gi, "$1[REDACTED]")
+    .replace(/\b(?:sk|pk)-[A-Za-z0-9._-]+\b/g, "[REDACTED]")
+    .replace(
+      /(\b(?:authorization|(?:access|refresh|id)[_-]?token|token|api[_-]?key|secret|password)\b["']?\s*[:=]\s*["']?)[^"',&;\s}\]]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(/\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED]");
+}
+
+export async function readErrorBody(response: Response): Promise<string> {
   try {
     const body = await response.text();
-    return body ? `: ${body.slice(0, 500)}` : "";
+    return body ? `: ${redactErrorBody(body.slice(0, 500))}` : "";
   } catch {
     return "";
   }

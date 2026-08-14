@@ -59,6 +59,26 @@ describe("runAuthSmoke", () => {
     ]);
   });
 
+  it("redacts credential-shaped values from auth failure bodies", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ error: "Bearer sk-master-secret", token: "plain-virtual-secret" }, { status: 500 }),
+    );
+
+    await expect(
+      runAuthSmoke({
+        baseUrl: "http://127.0.0.1:4000",
+        masterKey: "sk-master",
+        modelId: "vidaimock-openai",
+        timeoutMs: 1000,
+        enterprise: false,
+      }),
+    ).rejects.toSatisfy((error: Error) => {
+      expect(error.message).not.toContain("sk-master-secret");
+      expect(error.message).not.toContain("plain-virtual-secret");
+      return error.message.length < 600;
+    });
+  });
+
   it("checks virtual-key auth, enterprise admin-route enforcement, and SSO login", async () => {
     const requests: Array<{ url: string; body?: unknown; auth?: string }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {

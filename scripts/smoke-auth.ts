@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Provider } from "@earendil-works/pi-ai";
 import { normalizeBaseUrl } from "../src/discover.js";
-import { smokeChatCompletion } from "./smoke-runner.js";
+import { readErrorBody, smokeChatCompletion } from "./smoke-runner.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const BAD_SMOKE_KEY = "bad-smoke-key";
@@ -36,15 +36,6 @@ type SmokePi = {
   registerTool: () => void;
   on: () => void;
 };
-
-async function readErrorBody(response: Response): Promise<string> {
-  try {
-    const body = await response.text();
-    return body ? `: ${body.slice(0, 500)}` : "";
-  } catch {
-    return "";
-  }
-}
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
