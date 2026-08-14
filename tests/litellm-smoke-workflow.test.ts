@@ -33,8 +33,8 @@ describe("LiteLLM smoke workflow", () => {
     expect(workflow).toContain("Wait for VidaiMock");
     expect(workflow).toContain("VIDAIMOCK_BASE_URL: http://127.0.0.1:8100");
     expect(workflow).toContain("LITELLM_DATABASE_URL: postgresql://litellm:litellm@host.docker.internal:5432/litellm");
-    expect(workflow).toContain("docker.litellm.ai/berriai/litellm-database:main-latest");
-    expect(workflow).toContain("docker.litellm.ai/berriai/litellm:main-latest");
+    expect(workflow).toContain("docker.litellm.ai/berriai/litellm-database@sha256:");
+    expect(workflow).toContain("docker.litellm.ai/berriai/litellm@sha256:");
     expect(workflow).toContain("LITELLM_SMOKE_MODELS: vidaimock-openai anthropic/vidaimock-claude");
     expect(workflow).toContain("LITELLM_SMOKE_EXPECT_SOURCE: model_info");
     expect(workflow).toContain("LITELLM_CLI_SMOKE_MODEL: vidaimock-openai");
@@ -104,8 +104,8 @@ describe("LiteLLM smoke workflow", () => {
 
   it("selects the unlicensed image for pull requests", () => {
     expect(readWorkflow()).toContain(
-      "LITELLM_IMAGE: $" +
-        "{{ github.event_name != 'pull_request' && secrets.LITELLM_LICENSE != '' && 'docker.litellm.ai/berriai/litellm-database:main-latest' || 'docker.litellm.ai/berriai/litellm:main-latest' }}",
+        "LITELLM_IMAGE: $" +
+        "{{ github.event_name != 'pull_request' && secrets.LITELLM_LICENSE != '' && 'docker.litellm.ai/berriai/litellm-database@sha256:8b229a4b48fbe62d7f994b502106c3c1dbab958c07934fb446ac0e048a62745e' || 'docker.litellm.ai/berriai/litellm@sha256:f2dc9ba8a62cf2c51e3ed00e6975f4c70bb577b8ef0c2d7040e3228dc7d42b09' }}",
     );
   });
 
@@ -133,6 +133,17 @@ describe("LiteLLM smoke workflow", () => {
     expect(workflow).toMatch(/permissions:\n {2}contents: read/);
     expect(workflow).toMatch(/VIDAIMOCK_VERSION: v\d+\.\d+\.\d+$/m);
     expect(workflow).toMatch(/sha256sum -c "\$\{asset%\.tar\.gz\}\.sha256"/);
+  });
+
+  it("uses immutable container image references and script-free installs", () => {
+    const workflow = readWorkflow();
+    const ci = readCiWorkflow();
+
+    expect(workflow).toMatch(/docker\.litellm\.ai\/berriai\/litellm(?:-database)?@sha256:[a-f0-9]{64}/);
+    expect(workflow).toMatch(/postgres:[\w.-]+@sha256:[a-f0-9]{64}/);
+    expect(workflow).not.toContain("main-latest");
+    expect(workflow).not.toMatch(/postgres:[\w.-]+\s*$/m);
+    expect(ci).toContain("run: npm ci --ignore-scripts");
   });
 
   it("preserves the workflow environment in the terminal smoke", () => {
