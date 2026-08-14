@@ -35,10 +35,13 @@ describe("parseSmokeModels", () => {
 });
 
 it("redacts credential fields in JSON error bodies", () => {
-  const body = redactErrorBody('{"api_key":"plain-provider-secret","token":"plain-virtual-secret"}');
+  const body = redactErrorBody(
+    '{"api_key":"plain provider secret","token":"plain-virtual-secret","authorization":"Basic dXNlcjpwYXNz"}',
+  );
 
-  expect(body).not.toContain("plain-provider-secret");
+  expect(body).not.toContain("plain provider secret");
   expect(body).not.toContain("plain-virtual-secret");
+  expect(body).not.toContain("dXNlcjpwYXNz");
 });
 
 describe("smokeChatCompletion", () => {

@@ -54,7 +54,7 @@ export function redactErrorBody(body: string): string {
     .replace(/(Bearer\s+)[^"',\s}\]]+/gi, "$1[REDACTED]")
     .replace(/\b(?:sk|pk)-[A-Za-z0-9._-]+\b/g, "[REDACTED]")
     .replace(
-      /(\b(?:authorization|(?:access|refresh|id)[_-]?token|token|api[_-]?key|secret|password)\b["']?\s*[:=]\s*["']?)[^"',&;\s}\]]+/gi,
+      /(\b(?:authorization|(?:access|refresh|id)[_-]?token|token|api[_-]?key|secret|password)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^,&;\r\n}\]]+)/gi,
       "$1[REDACTED]",
     )
     .replace(/\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED]");
