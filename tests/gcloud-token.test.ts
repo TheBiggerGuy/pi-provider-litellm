@@ -134,11 +134,12 @@ describe("getGcloudToken", () => {
       client_secret: "client-secret",
       refresh_token: "refresh-token",
     });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("invalid_grant", { status: 400 }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("invalid_grant: remote-secret", { status: 400 }));
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     await expect(getGcloudToken()).resolves.toBeNull();
 
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Token exchange failed"));
+    expect(warnSpy.mock.calls.flat().join(" ")).not.toContain("remote-secret");
   });
 });

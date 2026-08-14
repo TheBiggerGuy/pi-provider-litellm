@@ -190,8 +190,7 @@ async function generateVirtualKey(
     signal: boundedSignal,
   });
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Virtual key generation failed (${response.status}): ${text}`);
+    throw new Error(`Virtual key generation failed (${response.status})`);
   }
   const data = (await response.json()) as { key?: unknown; expires?: unknown };
   if (typeof data.key !== "string" || !data.key) throw new Error("No key in response from /key/generate");

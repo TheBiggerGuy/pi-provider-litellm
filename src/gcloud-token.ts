@@ -118,7 +118,7 @@ async function exchangeRefreshToken(credentials: AuthorizedUserCredentials): Pro
     });
 
     if (!response.ok) {
-      console.warn(`LiteLLM gcloud auth: Token exchange failed (${response.status}): ${await response.text()}`);
+      console.warn(`LiteLLM gcloud auth: Token exchange failed (${response.status})`);
       return null;
     }
 

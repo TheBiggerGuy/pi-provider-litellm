@@ -1117,7 +1117,7 @@ describe("extension startup", () => {
     const progress = vi.fn();
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
-      if (url.endsWith("/key/generate")) return jsonResponse(403, { error: "forbidden" });
+      if (url.endsWith("/key/generate")) return jsonResponse(403, { error: "forbidden", token: "remote-secret" });
       if (url.endsWith("/model/info"))
         return jsonResponse(200, { data: [{ model_name: "gpt-4o", model_info: { mode: "chat" } }] });
       throw new Error(`unexpected URL: ${url}`);
@@ -1139,6 +1139,7 @@ describe("extension startup", () => {
 
     expect(credential).toMatchObject({ access: jwt, refresh: "" });
     expect(progress).toHaveBeenCalledWith(expect.stringContaining("virtual key generation failed"));
+    expect(progress.mock.calls.flat().join(" ")).not.toContain("remote-secret");
   });
 
   it("enterprise SSO login throws when SSO token is empty", async () => {
