@@ -221,6 +221,41 @@ describe("discoverModels via /model/info", () => {
     });
   });
 
+  it("maps LiteLLM reasoning effort capabilities", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: [
+          {
+            model_name: "custom/reasoner",
+            model_info: {
+              mode: "chat",
+              supports_reasoning: true,
+              supports_none_reasoning_effort: true,
+              supports_minimal_reasoning_effort: false,
+              supports_low_reasoning_effort: false,
+              supports_medium_reasoning_effort: false,
+              supports_high_reasoning_effort: true,
+              supports_xhigh_reasoning_effort: false,
+              supports_max_reasoning_effort: true,
+            },
+          },
+        ],
+      }),
+    );
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.thinkingLevelMap).toEqual({
+      off: "none",
+      minimal: null,
+      low: null,
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: "max",
+    });
+  });
+
   it("uses catalog costs when /model/info omits costs for Anthropic aliases", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = input instanceof URL ? input.toString() : String(input);
@@ -262,6 +297,23 @@ describe("discoverModels via /model/info", () => {
     const result = await discoverModels("https://litellm.example.com", "sk-test", {});
 
     expect(result.models[0]?.thinkingLevelMap).toMatchObject({ off: "none", xhigh: "xhigh", max: "max" });
+  });
+
+  it("merges partial reasoning effort capabilities over catalog metadata", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: [
+          {
+            model_name: "openai/gpt-5.6-luna",
+            model_info: { mode: "chat", supports_reasoning: true, supports_xhigh_reasoning_effort: false },
+          },
+        ],
+      }),
+    );
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.thinkingLevelMap).toMatchObject({ off: "none", xhigh: null, max: "max" });
   });
 
   it("preserves richer metadata from later duplicate model ids", async () => {
