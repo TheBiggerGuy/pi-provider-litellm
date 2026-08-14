@@ -49,26 +49,6 @@ export function parseSmokeModels(raw: string | undefined): string[] {
     .filter((model) => model.length > 0);
 }
 
-export function redactErrorBody(body: string): string {
-  return body
-    .replace(/(Bearer\s+)[^"',\s}\]]+/gi, "$1[REDACTED]")
-    .replace(/\b(?:sk|pk)-[A-Za-z0-9._-]+\b/g, "[REDACTED]")
-    .replace(
-      /(\b(?:authorization|(?:access|refresh|id)[_-]?token|token|api[_-]?key|secret|password)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^,&;\r\n}\]]+)/gi,
-      "$1[REDACTED]",
-    )
-    .replace(/\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED]");
-}
-
-export async function readErrorBody(response: Response): Promise<string> {
-  try {
-    const body = await response.text();
-    return body ? `: ${redactErrorBody(body.slice(0, 500))}` : "";
-  } catch {
-    return "";
-  }
-}
-
 export async function smokeChatCompletion(
   baseUrl: string,
   apiKey: string,
@@ -91,7 +71,7 @@ export async function smokeChatCompletion(
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
-    throw new Error(`/v1/chat/completions for ${modelId} returned ${response.status}${await readErrorBody(response)}`);
+    throw new Error(`/v1/chat/completions for ${modelId} returned ${response.status}`);
   }
   const data = (await response.json()) as ChatCompletionResponse;
   const content = data.choices?.[0]?.message?.content;

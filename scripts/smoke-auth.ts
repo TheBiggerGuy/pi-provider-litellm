@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Provider } from "@earendil-works/pi-ai";
 import { normalizeBaseUrl } from "../src/discover.js";
-import { readErrorBody, smokeChatCompletion } from "./smoke-runner.js";
+import { smokeChatCompletion } from "./smoke-runner.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const BAD_SMOKE_KEY = "bad-smoke-key";
@@ -60,13 +60,13 @@ function isAuthFailure(status: number): boolean {
 
 async function expectAuthFailure(label: string, response: Response): Promise<void> {
   if (!isAuthFailure(response.status)) {
-    throw new Error(`${label} should reject auth, got ${response.status}${await readErrorBody(response)}`);
+    throw new Error(`${label} should reject auth, got ${response.status}`);
   }
 }
 
 async function expectOk(label: string, response: Response): Promise<void> {
   if (!response.ok) {
-    throw new Error(`${label} returned ${response.status}${await readErrorBody(response)}`);
+    throw new Error(`${label} returned ${response.status}`);
   }
 }
 

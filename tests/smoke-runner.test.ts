@@ -1,11 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  parseSmokeModels,
-  redactErrorBody,
-  runSmoke,
-  runSmokeFromEnv,
-  smokeChatCompletion,
-} from "../scripts/smoke-runner.js";
+import { parseSmokeModels, runSmoke, runSmokeFromEnv, smokeChatCompletion } from "../scripts/smoke-runner.js";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -32,16 +26,6 @@ describe("parseSmokeModels", () => {
     expect(parseSmokeModels(undefined)).toEqual([]);
     expect(parseSmokeModels(" \n ,, \t ")).toEqual([]);
   });
-});
-
-it("redacts credential fields in JSON error bodies", () => {
-  const body = redactErrorBody(
-    '{"api_key":"plain provider secret","token":"plain-virtual-secret","authorization":"Basic dXNlcjpwYXNz"}',
-  );
-
-  expect(body).not.toContain("plain provider secret");
-  expect(body).not.toContain("plain-virtual-secret");
-  expect(body).not.toContain("dXNlcjpwYXNz");
 });
 
 describe("smokeChatCompletion", () => {
@@ -232,31 +216,7 @@ describe("runSmoke", () => {
     expect(requestedUrls).toEqual(["http://127.0.0.1:4000/model/info"]);
   });
 
-  it("truncates oversized provider error bodies in failures", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/model/info")) {
-        return jsonResponse(200, {
-          data: [{ model_name: "github-models-openai", model_info: { mode: "chat" } }],
-        });
-      }
-      if (url.endsWith("/v1/chat/completions")) {
-        return new Response("x".repeat(600), { status: 500 });
-      }
-      throw new Error(`unexpected URL: ${url}`);
-    });
-
-    await expect(
-      runSmoke({
-        baseUrl: "http://127.0.0.1:4000",
-        apiKey: "sk-smoke",
-        modelIds: ["github-models-openai"],
-        timeoutMs: 1000,
-      }),
-    ).rejects.toThrow(/returned 500: x{500}$/);
-  });
-
-  it("includes provider response bodies in chat completion failures", async () => {
+  it("omits provider response bodies from chat completion failures", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/model/info")) {
@@ -277,10 +237,10 @@ describe("runSmoke", () => {
         modelIds: ["github-models-openai"],
         timeoutMs: 1000,
       }),
-    ).rejects.toThrow(/\/v1\/chat\/completions for github-models-openai returned 429.*rate limited/);
+    ).rejects.toThrow("/v1/chat/completions for github-models-openai returned 429");
   });
 
-  it("redacts credential-shaped values from provider response bodies", async () => {
+  it("omits credentials from provider response bodies", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/model/info")) {
@@ -293,6 +253,7 @@ describe("runSmoke", () => {
           {
             authorization: "Bearer sk-live-secret",
             api_key: "plain-provider-secret",
+            credentials: ["unknown-secret-one", "unknown-secret-two"],
             jwt: "eyJhbGciOiJub25l.eyJzdWIiOiIxMjMifQ.sig",
           },
           { status: 500 },
@@ -312,6 +273,7 @@ describe("runSmoke", () => {
       expect(error.message).toContain("returned 500");
       expect(error.message).not.toContain("sk-live-secret");
       expect(error.message).not.toContain("plain-provider-secret");
+      expect(error.message).not.toContain("unknown-secret-two");
       expect(error.message).not.toContain("eyJhbGciOiJub25l");
       return error.message.length < 600;
     });
