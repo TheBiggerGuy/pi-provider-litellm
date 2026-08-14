@@ -38,6 +38,13 @@ export interface ModelInfoEntry {
     max_input_tokens?: number;
     max_output_tokens?: number;
     supports_reasoning?: boolean;
+    supports_none_reasoning_effort?: boolean;
+    supports_minimal_reasoning_effort?: boolean;
+    supports_low_reasoning_effort?: boolean;
+    supports_medium_reasoning_effort?: boolean;
+    supports_high_reasoning_effort?: boolean;
+    supports_xhigh_reasoning_effort?: boolean;
+    supports_max_reasoning_effort?: boolean;
     supports_vision?: boolean;
   };
 }

@@ -420,6 +420,26 @@ function mapModelsDevMetadata(model: ModelsDevModel | undefined): Partial<Discov
   return metadata;
 }
 
+function mapReasoningEfforts(
+  info: NonNullable<ModelInfoEntry["model_info"]>,
+): NonNullable<DiscoveredModel["thinkingLevelMap"]> | undefined {
+  const flags = [
+    ["off", "none", info.supports_none_reasoning_effort],
+    ["minimal", "minimal", info.supports_minimal_reasoning_effort],
+    ["low", "low", info.supports_low_reasoning_effort],
+    ["medium", "medium", info.supports_medium_reasoning_effort],
+    ["high", "high", info.supports_high_reasoning_effort],
+    ["xhigh", "xhigh", info.supports_xhigh_reasoning_effort],
+    ["max", "max", info.supports_max_reasoning_effort],
+  ] as const;
+  const map = Object.fromEntries(
+    flags
+      .filter(([, , supported]) => supported !== undefined)
+      .map(([level, value, supported]) => [level, supported ? value : null]),
+  ) as NonNullable<DiscoveredModel["thinkingLevelMap"]>;
+  return Object.keys(map).length > 0 ? map : undefined;
+}
+
 function mapFromModelInfo(entry: ModelInfoEntry): DiscoveredModel | undefined {
   const id = entry.model_name;
   if (!id) return undefined;
@@ -427,11 +447,16 @@ function mapFromModelInfo(entry: ModelInfoEntry): DiscoveredModel | undefined {
   if (!isChatStyleMode(info.mode)) return undefined;
   const responsesMode = isResponsesMode(info.mode);
   const catalogModel = findCatalogModel(id);
+  const reasoningEffortMap = mapReasoningEfforts(info);
+  const thinkingLevelMap =
+    catalogModel?.thinkingLevelMap || reasoningEffortMap
+      ? { ...catalogModel?.thinkingLevelMap, ...reasoningEffortMap }
+      : undefined;
   return {
     id,
     name: id,
     reasoning: info.supports_reasoning ?? false,
-    ...(catalogModel?.thinkingLevelMap ? { thinkingLevelMap: catalogModel.thinkingLevelMap } : {}),
+    ...(thinkingLevelMap ? { thinkingLevelMap } : {}),
     input: info.supports_vision ? ["text", "image"] : ["text"],
     cost: mapModelInfoCost(info, catalogModel?.cost),
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
