@@ -146,6 +146,19 @@ describe("LiteLLM smoke workflow", () => {
     expect(ci).toContain("run: npm ci --ignore-scripts");
   });
 
+  it("validates release tag identity, signature, version, and main ancestry", () => {
+    const release = readReleaseWorkflow();
+
+    expect(release).toContain("run: npm ci --ignore-scripts");
+    expect(release).toContain("git fetch --no-tags origin main");
+    expect(release).toContain('gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME"');
+    expect(release).toContain('test "$(jq -r .verification.verified <<<"$tag")" = true');
+    expect(release).toContain('git rev-parse "$GITHUB_REF_NAME^{}"');
+    expect(release).toContain('git merge-base --is-ancestor "$GITHUB_SHA" origin/main');
+    expect(release).toContain('packageVersion=$(node -p "require(\'./package.json\').version")');
+    expect(release).toContain('test "${GITHUB_REF_NAME#v}" = "$packageVersion"');
+  });
+
   it("preserves the workflow environment in the terminal smoke", () => {
     expect(readTerminalSmoke()).toContain("inheritEnv: true");
   });
