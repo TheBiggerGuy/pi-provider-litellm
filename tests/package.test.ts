@@ -56,8 +56,8 @@ describe("pi package compatibility", () => {
       "@earendil-works/pi-ai": { optional: true },
       "@earendil-works/pi-coding-agent": { optional: true },
     });
-    expect(manifest.devDependencies["@earendil-works/pi-ai"]).toBe("^0.83.0");
-    expect(manifest.devDependencies["@earendil-works/pi-coding-agent"]).toBe("^0.83.0");
+    expect(manifest.devDependencies["@earendil-works/pi-ai"]).toBe("^0.84.2");
+    expect(manifest.devDependencies["@earendil-works/pi-coding-agent"]).toBe("^0.84.2");
   });
 
   it("documents native Provider model persistence", async () => {
@@ -93,9 +93,10 @@ describe("dependency security overrides", () => {
     expect(Object.values(copiesOf("basic-ftp")).every((version) => version === "6.0.1")).toBe(true);
     expect(Object.values(copiesOf("brace-expansion"))).toEqual(["5.0.9"]);
     expect(Object.values(copiesOf("undici"))).toEqual(["8.9.0"]);
-    // Pi 0.81.1 no longer ships a nested protobufjs copy.
+    // Pi 0.84.2 still ships a nested protobufjs 7.x copy.
     expect(copiesOf("protobufjs")).toEqual({
       "node_modules/protobufjs": "8.7.1",
+      "node_modules/@earendil-works/pi-coding-agent/node_modules/protobufjs": "7.6.5",
     });
   });
 });

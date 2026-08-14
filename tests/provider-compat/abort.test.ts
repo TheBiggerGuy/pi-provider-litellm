@@ -33,10 +33,12 @@ describe("native provider abort compatibility", () => {
   });
 
   it("handles an already-aborted signal", async () => {
-    const { models, model } = await createCompatibilityHarness();
+    const { provider, model } = await createCompatibilityHarness();
     const signal = AbortSignal.abort();
 
-    const message = await models.streamSimple(model, { messages: [user("Stop")] }, { signal }).result();
+    const message = await provider
+      .streamSimple(model, { messages: [user("Stop")] }, { apiKey: "sk-test", signal })
+      .result();
 
     expect(message.stopReason).toBe("aborted");
     expect(message.content).toEqual([]);
