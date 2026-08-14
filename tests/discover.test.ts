@@ -37,6 +37,10 @@ afterEach(() => {
 });
 
 describe("normalizeBaseUrl", () => {
+  it("rejects insecure non-loopback endpoints", () => {
+    expect(() => normalizeBaseUrl("http://litellm.example.com")).toThrow(/HTTPS/);
+  });
+
   it("strips trailing slashes", () => {
     expect(normalizeBaseUrl("https://x.example.com/")).toBe("https://x.example.com");
     expect(normalizeBaseUrl("https://x.example.com///")).toBe("https://x.example.com");
