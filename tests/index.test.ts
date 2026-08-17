@@ -915,10 +915,14 @@ describe("extension startup", () => {
     const agentDir = await makeAgentDir();
     process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
     process.env.LITELLM_MODELS_DEV = "0";
-    const urls: string[] = [];
+    const requests: Array<{ url: string; method: string; pollSecret: string | null }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
-      urls.push(url);
+      requests.push({
+        url,
+        method: String(init?.method ?? "GET"),
+        pollSecret: new Headers(init?.headers).get("x-litellm-cli-poll-secret"),
+      });
       if (url.endsWith("/sso/cli/start"))
         return jsonResponse(200, {
           login_id: "cli-login",
@@ -962,11 +966,134 @@ describe("extension startup", () => {
       baseUrl: "https://litellm.example.com",
     });
     expect(credential?.expires).toBeGreaterThanOrEqual(startedAt + 7200 * 1000);
-    expect(urls).toEqual([
-      "https://litellm.example.com/sso/cli/start",
-      "https://litellm.example.com/sso/cli/poll/cli-login",
-      "https://litellm.example.com/sso/cli/poll/cli-login?team_id=team-b",
+    expect(requests).toEqual([
+      { url: "https://litellm.example.com/sso/cli/start", method: "POST", pollSecret: null },
+      { url: "https://litellm.example.com/sso/cli/poll/cli-login", method: "GET", pollSecret: "poll-secret" },
+      {
+        url: "https://litellm.example.com/sso/cli/poll/cli-login?team_id=team-b",
+        method: "GET",
+        pollSecret: "poll-secret",
+      },
     ]);
+  }, 15_000);
+
+  it("retries pending and transient CLI SSO polls", async () => {
+    const agentDir = await makeAgentDir();
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    process.env.LITELLM_MODELS_DEV = "0";
+    let polls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/sso/cli/start"))
+        return jsonResponse(200, { login_id: "cli-login", poll_secret: "poll-secret", user_code: "ABCD-EFGH" });
+      if (url.endsWith("/sso/cli/poll/cli-login")) {
+        polls += 1;
+        if (polls === 1) return jsonResponse(200, { status: "pending" });
+        if (polls === 2) return jsonResponse(503, { detail: "unavailable" });
+        return jsonResponse(200, { status: "ready", key: "opaque-cli-token" });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    await expect(
+      loginOAuth(pi.providers[0]!, {
+        onPrompt: async (prompt) => (prompt.placeholder ? "https://litellm.example.com" : ""),
+        onDeviceCode: () => undefined,
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ access: "opaque-cli-token" });
+    expect(polls).toBe(3);
+  }, 15_000);
+
+  it("preserves cancellation while waiting for a CLI SSO poll", async () => {
+    const agentDir = await makeAgentDir();
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    process.env.LITELLM_MODELS_DEV = "0";
+    let polled = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/sso/cli/start"))
+        return jsonResponse(200, { login_id: "cli-login", poll_secret: "poll-secret", user_code: "ABCD-EFGH" });
+      if (url.endsWith("/sso/cli/poll/cli-login")) {
+        polled = true;
+        return jsonResponse(200, { status: "pending" });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+    const controller = new AbortController();
+    const reason = new Error("caller cancelled login");
+    const login = loginOAuth(pi.providers[0]!, {
+      onPrompt: async (prompt) => (prompt.placeholder ? "https://litellm.example.com" : ""),
+      onDeviceCode: () => undefined,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(polled).toBe(true));
+    controller.abort(reason);
+    await expect(login).rejects.toBe(reason);
+  }, 15_000);
+
+  it("uses legacy token paste only when CLI SSO start is unavailable", async () => {
+    const agentDir = await makeAgentDir();
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    process.env.LITELLM_MODELS_DEV = "0";
+    let status = 404;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/sso/cli/start")) return jsonResponse(status, {});
+      if (url.endsWith("/key/generate")) return jsonResponse(200, { key: "sk-legacy" });
+      throw new Error(`unexpected URL: ${url}`);
+    });
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+    const login = () =>
+      loginOAuth(pi.providers[0]!, {
+        onPrompt: async (prompt) => (prompt.placeholder ? "https://litellm.example.com" : "Bearer legacy-token"),
+        onDeviceCode: () => undefined,
+        signal: new AbortController().signal,
+      });
+
+    await expect(login()).resolves.toMatchObject({ access: "sk-legacy" });
+    status = 500;
+    await expect(login()).rejects.toThrow("LiteLLM CLI SSO start failed (HTTP 500)");
+  }, 15_000);
+
+  it("uses configured and default CLI token lifetimes when poll expiry is absent", async () => {
+    const agentDir = await makeAgentDir();
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    process.env.LITELLM_MODELS_DEV = "0";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/sso/cli/start"))
+        return jsonResponse(200, { login_id: "cli-login", poll_secret: "poll-secret", user_code: "ABCD-EFGH" });
+      if (url.endsWith("/sso/cli/poll/cli-login"))
+        return jsonResponse(200, { status: "ready", key: "opaque-cli-token" });
+      throw new Error(`unexpected URL: ${url}`);
+    });
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+    const login = () =>
+      loginOAuth(pi.providers[0]!, {
+        onPrompt: async (prompt) => (prompt.placeholder ? "https://litellm.example.com" : ""),
+        onDeviceCode: () => undefined,
+        signal: new AbortController().signal,
+      });
+
+    process.env.LITELLM_CLI_JWT_EXPIRATION_HOURS = "48";
+    const configuredAt = Date.now();
+    const configured = await login();
+    expect(configured?.expires).toBeGreaterThanOrEqual(configuredAt + 48 * 60 * 60 * 1000);
+    delete process.env.LITELLM_CLI_JWT_EXPIRATION_HOURS;
+    const defaultAt = Date.now();
+    const fallback = await login();
+    expect(fallback?.expires).toBeGreaterThanOrEqual(defaultAt + 24 * 60 * 60 * 1000);
   }, 15_000);
 
   it("enterprise SSO login strips Bearer prefix from pasted SSO token", async () => {
