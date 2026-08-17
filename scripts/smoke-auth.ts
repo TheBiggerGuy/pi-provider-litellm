@@ -37,6 +37,18 @@ type SmokePi = {
   on: () => void;
 };
 
+async function readErrorBody(response: Response): Promise<string> {
+  try {
+    const body = await response.text();
+    const redacted = body
+      .replace(/Bearer\s+[^\s",}]+/gi, "Bearer [redacted]")
+      .replace(/("(?:token|key|secret|access_token)"\s*:\s*")[^"]*/gi, "$1[redacted]");
+    return redacted ? `: ${redacted.slice(0, 500)}` : "";
+  } catch {
+    return "";
+  }
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
@@ -60,13 +72,13 @@ function isAuthFailure(status: number): boolean {
 
 async function expectAuthFailure(label: string, response: Response): Promise<void> {
   if (!isAuthFailure(response.status)) {
-    throw new Error(`${label} should reject auth, got ${response.status}`);
+    throw new Error(`${label} should reject auth, got ${response.status}${await readErrorBody(response)}`);
   }
 }
 
 async function expectOk(label: string, response: Response): Promise<void> {
   if (!response.ok) {
-    throw new Error(`${label} returned ${response.status}`);
+    throw new Error(`${label} returned ${response.status}${await readErrorBody(response)}`);
   }
 }
 
@@ -156,19 +168,30 @@ export async function runSsoLoginSmoke(
     if (!oauth) throw new Error("LiteLLM provider did not expose OAuth login");
 
     const authInfos: Array<{ url: string; instructions?: string }> = [];
-    const credential = await oauth.login({
-      prompt: async (prompt) => {
-        const { message } = prompt;
-        if ("placeholder" in prompt && prompt.placeholder) return baseUrl;
-        if (message.includes("SSO token")) return `Bearer ${options.masterKey}`;
-        if (message.includes("Generate a LiteLLM virtual key")) return "y";
-        return "";
-      },
-      notify: (event) => {
-        if (event.type === "auth_url") authInfos.push(event);
-      },
-      signal: new AbortController().signal,
-    });
+    const fetchImpl = globalThis.fetch;
+    // ponytail: the smoke proxy has no SSO IdP; protocol tests cover CLI SSO while this keeps legacy fallback live.
+    globalThis.fetch = (input, init) =>
+      String(input) === `${baseUrl}/sso/cli/start`
+        ? Promise.resolve(new Response(null, { status: 404 }))
+        : fetchImpl(input, init);
+    let credential: Awaited<ReturnType<typeof oauth.login>>;
+    try {
+      credential = await oauth.login({
+        prompt: async (prompt) => {
+          const { message } = prompt;
+          if ("placeholder" in prompt && prompt.placeholder) return baseUrl;
+          if (message.includes("SSO token")) return `Bearer ${options.masterKey}`;
+          if (message.includes("Generate a LiteLLM virtual key")) return "y";
+          return "";
+        },
+        notify: (event) => {
+          if (event.type === "auth_url") authInfos.push(event);
+        },
+        signal: new AbortController().signal,
+      });
+    } finally {
+      globalThis.fetch = fetchImpl;
+    }
 
     if (!authInfos.some((info) => info.url === `${baseUrl}/sso/key/generate`)) {
       throw new Error("SSO login did not request /sso/key/generate");

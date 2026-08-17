@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type {
   Api,
   ApiKeyCredential,
@@ -40,11 +41,15 @@ const ENV_API_KEY = "LITELLM_API_KEY";
 const ENV_API_KEY_HELPER = "LITELLM_API_KEY_HELPER";
 const ENV_HEADERS = "LITELLM_HEADERS";
 const ENV_TIMEOUT = "LITELLM_DISCOVERY_TIMEOUT_MS";
+const ENV_CLI_JWT_EXPIRATION_HOURS = "LITELLM_CLI_JWT_EXPIRATION_HOURS";
 const ENV_OFFLINE = "LITELLM_OFFLINE";
 const ENV_VERBOSE_DISCOVERY = "LITELLM_VERBOSE_DISCOVERY";
 const ENV_MODELS_DEV = "LITELLM_MODELS_DEV";
 const DEFAULT_TIMEOUT_MS = 5000;
 const LOGIN_TIMEOUT_MS = 10_000;
+const CLI_SSO_POLL_INTERVAL_MS = 2_000;
+const CLI_SSO_EXPIRES_IN_SECONDS = 600;
+const DEFAULT_CLI_JWT_EXPIRATION_HOURS = 24;
 const MODELS_DEV_CACHE_FILENAME = "litellm-models-dev.json";
 const TOKEN_REFRESH_LEAD_MS = 5 * 60 * 1000;
 const PERMANENT_TOKEN_EXPIRES_AT = Number.MAX_SAFE_INTEGER;
@@ -170,15 +175,24 @@ function tokenExpiresAt(apiKey: string, opaqueFallback = PERMANENT_TOKEN_EXPIRES
   }
 }
 
+function configuredCliJwtExpiresAt(): number {
+  const configured = Number(process.env[ENV_CLI_JWT_EXPIRATION_HOURS]);
+  const hours = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_CLI_JWT_EXPIRATION_HOURS;
+  return Date.now() + hours * 60 * 60 * 1_000;
+}
+
+function boundedLoginSignal(signal?: AbortSignal): AbortSignal {
+  return signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(LOGIN_TIMEOUT_MS)])
+    : AbortSignal.timeout(LOGIN_TIMEOUT_MS);
+}
+
 async function generateVirtualKey(
   baseUrl: string,
   userToken: string,
   signal?: AbortSignal,
   headers?: Record<string, string>,
 ): Promise<{ key: string; expiresAt?: number }> {
-  const boundedSignal = signal
-    ? AbortSignal.any([signal, AbortSignal.timeout(LOGIN_TIMEOUT_MS)])
-    : AbortSignal.timeout(LOGIN_TIMEOUT_MS);
   const response = await fetch(`${baseUrl}/key/generate`, {
     method: "POST",
     headers: {
@@ -187,7 +201,7 @@ async function generateVirtualKey(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({}),
-    signal: boundedSignal,
+    signal: boundedLoginSignal(signal),
   });
   if (!response.ok) {
     throw new Error(`Virtual key generation failed (${response.status})`);
@@ -461,16 +475,117 @@ async function loginApiKey(interaction: AuthInteraction): Promise<ApiKeyCredenti
   return { type: "api_key", key, env: { [ENV_BASE_URL]: normalizeBaseUrl(rawBaseUrl) } };
 }
 
-async function loginOAuth(interaction: AuthInteraction, headers?: Record<string, string>): Promise<OAuthCredential> {
-  const rawBaseUrl = (
-    await interaction.prompt({
-      type: "text",
-      message: "Enter LiteLLM proxy URL (no trailing /v1):",
-      placeholder: "https://litellm.example.com",
-    })
-  ).trim();
-  if (!rawBaseUrl) throw new Error("Base URL is required");
-  const baseUrl = normalizeBaseUrl(rawBaseUrl);
+type CliSsoStart = { loginId: string; pollSecret: string; userCode: string; expiresInSeconds: number };
+
+async function startCliSso(
+  baseUrl: string,
+  signal?: AbortSignal,
+  headers?: Record<string, string>,
+): Promise<CliSsoStart | undefined> {
+  const response = await fetch(`${baseUrl}/sso/cli/start`, {
+    method: "POST",
+    headers,
+    signal: boundedLoginSignal(signal),
+  });
+  if (response.status === 404 || response.status === 405) return undefined;
+  if (!response.ok) throw new Error(`LiteLLM CLI SSO start failed (HTTP ${response.status})`);
+  const data = (await response.json()) as Record<string, unknown>;
+  if (
+    typeof data.login_id !== "string" ||
+    !data.login_id ||
+    typeof data.poll_secret !== "string" ||
+    !data.poll_secret ||
+    typeof data.user_code !== "string" ||
+    !data.user_code
+  ) {
+    throw new Error("LiteLLM CLI SSO start returned an invalid response");
+  }
+  return {
+    loginId: data.login_id,
+    pollSecret: data.poll_secret,
+    userCode: data.user_code,
+    expiresInSeconds:
+      typeof data.expires_in === "number" && Number.isFinite(data.expires_in) && data.expires_in > 0
+        ? data.expires_in
+        : CLI_SSO_EXPIRES_IN_SECONDS,
+  };
+}
+
+async function waitForNextCliSsoPoll(interaction: AuthInteraction): Promise<void> {
+  try {
+    await delay(CLI_SSO_POLL_INTERVAL_MS, undefined, interaction.signal ? { signal: interaction.signal } : undefined);
+  } catch (error) {
+    if (interaction.signal?.aborted) throw interaction.signal.reason;
+    throw error;
+  }
+}
+
+async function pollCliSso(
+  baseUrl: string,
+  start: CliSsoStart,
+  interaction: AuthInteraction,
+  headers?: Record<string, string>,
+): Promise<{ access: string; expiresInSeconds?: number }> {
+  const deadline = Date.now() + start.expiresInSeconds * 1_000;
+  const pollUrl = new URL(`${baseUrl}/sso/cli/poll/${encodeURIComponent(start.loginId)}`);
+  let teamId: string | undefined;
+  while (Date.now() < deadline) {
+    if (teamId) pollUrl.searchParams.set("team_id", teamId);
+    let response: Response;
+    try {
+      response = await fetch(pollUrl, {
+        headers: { ...headers, "x-litellm-cli-poll-secret": start.pollSecret },
+        signal: boundedLoginSignal(interaction.signal),
+      });
+    } catch {
+      if (interaction.signal?.aborted) throw interaction.signal.reason;
+      await waitForNextCliSsoPoll(interaction);
+      continue;
+    }
+    if (response.status === 429 || response.status >= 500) {
+      await waitForNextCliSsoPoll(interaction);
+      continue;
+    }
+    if (response.status === 400) throw new Error("LiteLLM CLI SSO login expired or is invalid");
+    if (!response.ok) throw new Error(`LiteLLM CLI SSO polling failed (HTTP ${response.status})`);
+    const data = (await response.json()) as Record<string, unknown>;
+    if (data.status === "ready" && typeof data.key === "string" && data.key) {
+      return {
+        access: data.key,
+        expiresInSeconds:
+          typeof data.expires_in === "number" && Number.isFinite(data.expires_in) && data.expires_in > 0
+            ? data.expires_in
+            : undefined,
+      };
+    }
+    if (data.status === "ready" && data.requires_team_selection === true && !teamId) {
+      const details = Array.isArray(data.team_details) ? data.team_details : [];
+      const teams = details.flatMap((team) => {
+        if (!team || typeof team !== "object") return [];
+        const record = team as Record<string, unknown>;
+        const id = typeof record.team_id === "string" ? record.team_id : record.id;
+        const alias = record.team_alias;
+        return typeof id === "string" && id ? [{ id, label: typeof alias === "string" && alias ? alias : id }] : [];
+      });
+      if (teams.length === 0 && Array.isArray(data.teams))
+        teams.push(...data.teams.flatMap((id) => (typeof id === "string" && id ? [{ id, label: id }] : [])));
+      if (teams.length === 0) throw new Error("LiteLLM CLI SSO requested team selection without any teams");
+      const selected = await interaction.prompt({ type: "select", message: "Select a LiteLLM team:", options: teams });
+      if (!teams.some((team) => team.id === selected)) throw new Error("Invalid LiteLLM team selection");
+      teamId = selected;
+      continue;
+    }
+    if (data.status !== "pending") throw new Error("LiteLLM CLI SSO polling returned an invalid response");
+    await waitForNextCliSsoPoll(interaction);
+  }
+  throw new Error("LiteLLM CLI SSO login expired");
+}
+
+async function loginWithPastedToken(
+  interaction: AuthInteraction,
+  baseUrl: string,
+  headers?: Record<string, string>,
+): Promise<OAuthCredential> {
   interaction.notify({
     type: "auth_url",
     url: `${baseUrl}/sso/key/generate`,
@@ -508,6 +623,36 @@ async function loginOAuth(interaction: AuthInteraction, headers?: Record<string,
     }
   }
   return { type: "oauth", access, refresh: "", expires, baseUrl };
+}
+
+async function loginOAuth(interaction: AuthInteraction, headers?: Record<string, string>): Promise<OAuthCredential> {
+  const rawBaseUrl = (
+    await interaction.prompt({
+      type: "text",
+      message: "Enter LiteLLM proxy URL (no trailing /v1):",
+      placeholder: "https://litellm.example.com",
+    })
+  ).trim();
+  if (!rawBaseUrl) throw new Error("Base URL is required");
+  const baseUrl = normalizeBaseUrl(rawBaseUrl);
+  const cliSso = await startCliSso(baseUrl, interaction.signal, headers);
+  if (!cliSso) return loginWithPastedToken(interaction, baseUrl, headers);
+  interaction.notify({
+    type: "device_code",
+    userCode: cliSso.userCode,
+    verificationUri: `${baseUrl}/sso/key/generate?${new URLSearchParams({ source: "litellm-cli", key: cliSso.loginId })}`,
+    expiresInSeconds: cliSso.expiresInSeconds,
+  });
+  const result = await pollCliSso(baseUrl, cliSso, interaction, headers);
+  return {
+    type: "oauth",
+    access: result.access,
+    refresh: "",
+    expires: result.expiresInSeconds
+      ? Date.now() + result.expiresInSeconds * 1_000
+      : tokenExpiresAt(result.access, configuredCliJwtExpiresAt()),
+    baseUrl,
+  };
 }
 
 async function refreshLiteLLM(credentials: OAuthCredentials, _signal?: AbortSignal): Promise<OAuthCredentials> {
