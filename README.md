@@ -46,17 +46,17 @@ You'll be prompted for the base URL and API key. Credentials are persisted to `~
 
 #### Enterprise SSO login
 
-If your LiteLLM proxy requires SSO/OAuth authentication (enterprise deployments), you can authenticate via a browser SSO flow and optionally pair the resulting JWT with a stable virtual key:
+If your LiteLLM proxy requires SSO/OAuth authentication (enterprise deployments), you can authenticate through LiteLLM's CLI SSO flow:
 
 1. Run `/login litellm` inside pi and select `Sign in with LiteLLM SSO`
 2. Enter the proxy URL
-3. Your default browser opens the LiteLLM SSO login URL (e.g. `https://litellm.your-domain.com/sso/key/generate`) automatically — the URL is also displayed in case it can't be opened. Authenticate via SSO
-4. Copy your token from the LiteLLM UI and paste it at the prompt (copying a full `Bearer ...` header value is fine — the prefix is stripped automatically)
-5. When prompted to generate a virtual key, press Enter to accept (recommended) or enter `n` to use the JWT directly
+3. Pi displays a verification code and opens the LiteLLM SSO login URL automatically
+4. Authenticate in the browser and confirm the displayed code
+5. If your account belongs to multiple teams, select the team for this session in Pi
 
-When you generate a virtual key, the resulting `sk-...` key is stored as your credential and used for all API requests. If the proxy's key policy attaches an expiry to the generated key, Pi will prompt you to re-authenticate when it nears expiry; otherwise the key is treated as permanent until revoked in LiteLLM.
+Pi polls the proxy until authentication completes and stores the returned short-lived CLI token. Newer proxies advertise the token lifetime; for older proxies, Pi uses `LITELLM_CLI_JWT_EXPIRATION_HOURS` or LiteLLM's 24-hour default. On LiteLLM versions that gate CLI SSO, start the proxy with `EXPERIMENTAL_UI_LOGIN=True`.
 
-When using a JWT directly, the extension reads its `exp` claim and Pi will prompt you to re-authenticate when the token nears expiry. Run `/login litellm` again to refresh.
+Older proxies without `/sso/cli/start` fall back to the legacy browser flow: copy the token from the LiteLLM UI, paste it into Pi, and optionally exchange it for a virtual key. Pi reads JWT expiry claims and prompts you to run `/login litellm` again when re-authentication is required.
 
 ### Option B — environment variables
 
@@ -155,6 +155,7 @@ Treat the configured LiteLLM proxy as trusted: Skills can add instructions to th
 | `GOOGLE_APPLICATION_CREDENTIALS` | Google default ADC path | Optional path to an ADC JSON file used by `LITELLM_GCLOUD_TOKEN_AUTH`. If unset, the extension checks the default gcloud ADC locations. |
 | `LITELLM_OFFLINE` | unset | If `1`, disable all model and MCP discovery, including post-login discovery; use cached models only |
 | `LITELLM_DISCOVERY_TIMEOUT_MS` | `5000` | Background and explicit discovery fetch timeout in ms; `0` disables automatic discovery |
+| `LITELLM_CLI_JWT_EXPIRATION_HOURS` | `24` | CLI SSO token lifetime fallback for older proxies whose poll response omits `expires_in`; mirror a non-default proxy setting locally |
 | `LITELLM_VERBOSE_DISCOVERY` | unset | If `1`, enable progress messages during model and MCP discovery (login, refresh, startup); discovery is silent by default |
 | `LITELLM_MODELS_DEV` | enabled | Set to `0` to disable models.dev metadata enrichment, including its cache and network request; `/v1/models` still uses Pi catalog metadata and defaults |
 
@@ -242,6 +243,8 @@ Opening `/model` refreshes configured provider catalogs in the background using 
 | Discovery times out | Increase `LITELLM_DISCOVERY_TIMEOUT_MS` or set `LITELLM_OFFLINE=1` to fall back on cached models |
 | `401 Token expired` | Set `LITELLM_API_KEY_HELPER`. |
 | No models with gcloud auth | Verify `gcloud auth application-default login` has been run or set `GOOGLE_APPLICATION_CREDENTIALS` to an `authorized_user` ADC file |
+| Enterprise SSO waits for token insertion | The proxy returned 404/405 for `/sso/cli/start`, so Pi used the legacy flow — upgrade LiteLLM or paste the UI token |
+| Enterprise CLI SSO start/poll fails | Check the proxy logs and verify `/sso/cli/start` and `/sso/cli/poll/{login_id}` are reachable; only 404/405 falls back to legacy login |
 | Enterprise SSO login shows "virtual key generation failed" | The LiteLLM instance may lack a database (`/key/generate` requires one), your user account may lack key-generation permission, or the request timed out; the JWT is used directly as a fallback |
 | Enterprise SSO token prompt fails with "SSO token is required" | The token field was left empty — paste the token copied from the LiteLLM UI |
 | MCP tools not showing | Verify the proxy exposes `/mcp-rest/tools/list` and open `/model` after fixing the proxy |

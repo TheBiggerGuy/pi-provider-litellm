@@ -59,9 +59,9 @@ describe("runAuthSmoke", () => {
     ]);
   });
 
-  it("redacts credential-shaped values from auth failure bodies", async () => {
+  it("keeps auth failure errors limited to endpoint and status", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ error: "Bearer sk-master-secret", token: "plain-virtual-secret" }, { status: 500 }),
+      Response.json({ error: "upstream failure", credentials: "unrecognized-secret" }, { status: 500 }),
     );
 
     await expect(
@@ -73,9 +73,8 @@ describe("runAuthSmoke", () => {
         enterprise: false,
       }),
     ).rejects.toSatisfy((error: Error) => {
-      expect(error.message).not.toContain("sk-master-secret");
-      expect(error.message).not.toContain("plain-virtual-secret");
-      return error.message.length < 600;
+      expect(error.message).toBe("missing-token /v1/models should reject auth, got 500");
+      return true;
     });
   });
 

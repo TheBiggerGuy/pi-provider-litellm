@@ -156,19 +156,30 @@ export async function runSsoLoginSmoke(
     if (!oauth) throw new Error("LiteLLM provider did not expose OAuth login");
 
     const authInfos: Array<{ url: string; instructions?: string }> = [];
-    const credential = await oauth.login({
-      prompt: async (prompt) => {
-        const { message } = prompt;
-        if ("placeholder" in prompt && prompt.placeholder) return baseUrl;
-        if (message.includes("SSO token")) return `Bearer ${options.masterKey}`;
-        if (message.includes("Generate a LiteLLM virtual key")) return "y";
-        return "";
-      },
-      notify: (event) => {
-        if (event.type === "auth_url") authInfos.push(event);
-      },
-      signal: new AbortController().signal,
-    });
+    const fetchImpl = globalThis.fetch;
+    // ponytail: the smoke proxy has no SSO IdP; protocol tests cover CLI SSO while this keeps legacy fallback live.
+    globalThis.fetch = (input, init) =>
+      String(input) === `${baseUrl}/sso/cli/start`
+        ? Promise.resolve(new Response(null, { status: 404 }))
+        : fetchImpl(input, init);
+    let credential: Awaited<ReturnType<typeof oauth.login>>;
+    try {
+      credential = await oauth.login({
+        prompt: async (prompt) => {
+          const { message } = prompt;
+          if ("placeholder" in prompt && prompt.placeholder) return baseUrl;
+          if (message.includes("SSO token")) return `Bearer ${options.masterKey}`;
+          if (message.includes("Generate a LiteLLM virtual key")) return "y";
+          return "";
+        },
+        notify: (event) => {
+          if (event.type === "auth_url") authInfos.push(event);
+        },
+        signal: new AbortController().signal,
+      });
+    } finally {
+      globalThis.fetch = fetchImpl;
+    }
 
     if (!authInfos.some((info) => info.url === `${baseUrl}/sso/key/generate`)) {
       throw new Error("SSO login did not request /sso/key/generate");
