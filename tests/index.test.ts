@@ -23,7 +23,6 @@ const ENV_KEYS = [
   "LITELLM_ANTHROPIC_HEADERS",
   "LITELLM_DISCOVERY_TIMEOUT_MS",
   "LITELLM_CLI_JWT_EXPIRATION_HOURS",
-  "LITELLM_MODELS_DEV",
   "LITELLM_GCLOUD_TOKEN_AUTH",
   "GOOGLE_APPLICATION_CREDENTIALS",
   "STORED_LITELLM_KEY",
@@ -204,36 +203,6 @@ describe("extension startup", () => {
     expect(pi.commands.has("litellm-refresh")).toBe(false);
   });
 
-  it("disables models.dev enrichment with LITELLM_MODELS_DEV=0", async () => {
-    const agentDir = await makeAgentDir();
-    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
-    process.env.LITELLM_API_KEY = "sk-test";
-    process.env.LITELLM_MODELS_DEV = "0";
-    const urls: string[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      urls.push(url);
-      if (url.endsWith("/model/info")) return new Response(null, { status: 403 });
-      if (url.endsWith("/v1/models")) {
-        return jsonResponse(200, { data: [{ id: "gpt-5.5", owned_by: "openai" }] });
-      }
-      if (url.endsWith("/mcp-rest/tools/list")) return jsonResponse(200, { tools: [] });
-      throw new Error(`unexpected URL: ${url}`);
-    });
-    const extension = await loadExtension(agentDir);
-    const pi = createPi();
-    await extension(pi);
-
-    await refreshProvider(pi.providers[0]!, {
-      allowNetwork: true,
-      force: true,
-      credential: { type: "api_key", key: "sk-test", env: { LITELLM_BASE_URL: "https://litellm.example.com" } },
-    });
-
-    expect(urls).not.toContain("https://models.dev/api.json");
-    expect(pi.providers[0]?.getModels()[0]?.id).toBe("gpt-5.5");
-  });
-
   it("keeps one provider registration across Pi-managed refresh", async () => {
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
     process.env.LITELLM_API_KEY = "sk-test";
@@ -368,7 +337,6 @@ describe("extension startup", () => {
   });
 
   it("does not block model refresh on MCP discovery", async () => {
-    process.env.LITELLM_MODELS_DEV = "0";
     let mcpStarted!: () => void;
     let releaseMcp!: (response: Response) => void;
     const started = new Promise<void>((resolve) => {
@@ -917,7 +885,6 @@ describe("extension startup", () => {
   it("completes CLI SSO with the server lifetime and selected team", async () => {
     const agentDir = await makeAgentDir();
     process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
-    process.env.LITELLM_MODELS_DEV = "0";
     const requests: Array<{ url: string; method: string; pollSecret: string | null }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
@@ -983,7 +950,6 @@ describe("extension startup", () => {
   it("retries pending and transient CLI SSO polls", async () => {
     const agentDir = await makeAgentDir();
     process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
-    process.env.LITELLM_MODELS_DEV = "0";
     let polls = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
@@ -1014,7 +980,6 @@ describe("extension startup", () => {
   it("preserves cancellation while waiting for a CLI SSO poll", async () => {
     const agentDir = await makeAgentDir();
     process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
-    process.env.LITELLM_MODELS_DEV = "0";
     let polled = false;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
@@ -1044,7 +1009,6 @@ describe("extension startup", () => {
   it("uses legacy token paste only when CLI SSO start is unavailable", async () => {
     const agentDir = await makeAgentDir();
     process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
-    process.env.LITELLM_MODELS_DEV = "0";
     let status = 404;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
@@ -1070,7 +1034,6 @@ describe("extension startup", () => {
   it("uses configured and default CLI token lifetimes when poll expiry is absent", async () => {
     const agentDir = await makeAgentDir();
     process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
-    process.env.LITELLM_MODELS_DEV = "0";
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/sso/cli/start"))
