@@ -116,7 +116,14 @@ describe.skipIf(!enabled)("interactive Pi terminal smoke", () => {
     "logs in and selects LiteLLM models",
     async () => {
       await withPi(async (session) => {
-        await session.screen.waitForText("Warning: No models available", { timeoutMs: waitTimeoutMs });
+        // LITELLM_BASE_URL/LITELLM_API_KEY are set, so the catalog is discovered during
+        // activation and Pi must not report an empty model list at startup (issue #137).
+        await session.screen.waitForIdle({ timeoutMs: waitTimeoutMs });
+        const startup = await session.screen.waitUntil((snapshot) => snapshot.text.length > 0, {
+          timeoutMs: waitTimeoutMs,
+        });
+        expect(startup.text).not.toContain("Warning: No models available");
+
         await submit(session, "/login litellm", "LiteLLM · subscription/API key");
         await selectApiKeyAuthMethod(session);
         await session.screen.waitForText("Enter LiteLLM proxy URL", { timeoutMs: waitTimeoutMs });
