@@ -8,6 +8,9 @@ export type LiteLLMProviderOptions = {
   name: string;
   baseUrl: string;
   auth: ProviderAuth;
+  /** Catalog discovered during activation. Pi's startup refresh never allows network access, so
+   * without a seed the provider stays empty until the user opens /model. */
+  models?: readonly Model<LiteLLMApi>[];
   discover(credential: Credential, signal?: AbortSignal): Promise<DiscoveryResult & { baseUrl?: string }>;
 };
 
@@ -30,7 +33,7 @@ export function createLiteLLMProvider(options: LiteLLMProviderOptions): Provider
     name: options.name,
     baseUrl: options.baseUrl,
     auth: options.auth,
-    models: [],
+    models: options.models ?? [],
     async fetchModels(context) {
       if (!context.credential) throw new Error("LiteLLM model discovery requires a credential");
       const result = await options.discover(context.credential, context.signal);

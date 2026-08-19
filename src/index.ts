@@ -8,12 +8,13 @@ import type {
   AssistantMessage,
   AuthInteraction,
   Credential,
+  Model,
   OAuthCredential,
   OAuthCredentials,
   ProviderAuth,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, readStoredCredential } from "@earendil-works/pi-coding-agent";
 import { setupLiteLLMCostTracking } from "./cost.js";
 import {
   discoverModels,
@@ -30,9 +31,9 @@ import {
 } from "./gcloud-token.js";
 import { getSessionIdFromFile } from "./litellm.js";
 import { createMcpToolDefinitions } from "./mcp-tools.js";
-import { createLiteLLMProvider } from "./provider.js";
+import { createLiteLLMProvider, toNativeModels } from "./provider.js";
 import { createSkillsPromptSection, createSkillToolDefinitions, listSkills } from "./skills.js";
-import type { DiscoveryOptions, LiteLLMRuntimeAuth, ResolvedCredentials } from "./types.js";
+import type { DiscoveryOptions, LiteLLMApi, LiteLLMRuntimeAuth, ResolvedCredentials } from "./types.js";
 
 const PROVIDER_NAME = "litellm";
 const SETTINGS_KEY = "litellm";
@@ -413,6 +414,11 @@ function getDiscoveryTimeoutMs(): number {
 
 function isOffline(): boolean {
   return process.env[ENV_OFFLINE] === "1";
+}
+
+/** Pi disables all model network access when PI_OFFLINE is set; activation must honour it too. */
+function isHostOffline(): boolean {
+  return process.env.PI_OFFLINE !== undefined;
 }
 
 function isVerboseDiscovery(): boolean {
@@ -1032,15 +1038,20 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     return `${normalizeBaseUrl(baseUrl)}/v1`;
   }
 
-  async function authForCredential(definition: ProviderDefinition, credential: Credential) {
-    if (credential.type === "oauth") {
+  async function authForCredential(definition: ProviderDefinition, credential?: Credential, executeHelpers = true) {
+    if (credential?.type === "oauth") {
       const baseUrl =
         typeof credential.baseUrl === "string"
           ? normalizeBaseUrl(credential.baseUrl)
           : normalizeBaseUrl(requestBaseUrl(definition));
       return { baseUrl, apiKey: credential.access, headers: resolveHeaders(definition) };
     }
-    const resolved = await resolveApiKeyAuth(definition, { env: async (name) => process.env[name] }, credential);
+    const resolved = await resolveApiKeyAuth(
+      definition,
+      { env: async (name) => process.env[name] },
+      credential,
+      executeHelpers,
+    );
     if (!resolved?.auth.apiKey) {
       throw new Error(`no credentials for ${definition.name}. Run /login litellm or set env vars.`);
     }
@@ -1146,26 +1157,55 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     }
   }
 
-  for (const definition of definitions) {
+  async function runDiscovery(auth: LiteLLMRuntimeAuth, signal?: AbortSignal) {
+    const result = await discoverModels(auth.baseUrl, auth.apiKey, {
+      ...getModelsDevDiscoveryOptions(),
+      timeoutMs: getDiscoveryTimeoutMs(),
+      signal,
+      headers: auth.headers,
+      silent: !isVerboseDiscovery(),
+      onProgress: isVerboseDiscovery() ? (message) => process.stderr.write(`LiteLLM: ${message}\n`) : undefined,
+    });
+    signal?.throwIfAborted();
+    return { ...result, baseUrl: `${normalizeBaseUrl(auth.baseUrl)}/v1` };
+  }
+
+  // Pi's startup path only ever refreshes with allowNetwork:false, and it returns before the
+  // network phase, so the provider would stay empty until the user opens /model. Discover here
+  // instead, the way 1.x did, and hand the catalog over as the provider's baseline models.
+  async function seedModels(definition: ProviderDefinition): Promise<Model<LiteLLMApi>[]> {
+    if (discoveryDisabledReason() || isHostOffline()) return [];
+    try {
+      const stored = readStoredCredential(definition.name, join(getAgentDir(), "auth.json"));
+      // executeHelpers:false — activation must never run the user's key helper as a side effect,
+      // so helper-backed setups keep waiting for Pi's own refresh.
+      const auth = await authForCredential(definition, stored, false);
+      const result = await runDiscovery(auth, AbortSignal.timeout(getDiscoveryTimeoutMs() * 2));
+      return toNativeModels(definition.name, result.baseUrl, result.models);
+    } catch (error) {
+      // No credentials yet is the normal unconfigured case; anything else is worth one line.
+      if (isVerboseDiscovery()) {
+        process.stderr.write(
+          `LiteLLM (${definition.name}): startup discovery skipped (${error instanceof Error ? error.message : String(error)}).\n`,
+        );
+      }
+      return [];
+    }
+  }
+
+  const seeded = await Promise.all(definitions.map(seedModels));
+
+  for (const [index, definition] of definitions.entries()) {
     const provider = createLiteLLMProvider({
       id: definition.name,
       name: definition.displayName,
       baseUrl: requestBaseUrl(definition),
       auth: createProviderAuth(definition),
+      models: seeded[index],
       discover: async (credential, signal) => {
         const disabledReason = discoveryDisabledReason();
         if (disabledReason) throw new Error(`discovery disabled (${disabledReason})`);
-        const auth = await authForCredential(definition, credential);
-        const result = await discoverModels(auth.baseUrl, auth.apiKey, {
-          ...getModelsDevDiscoveryOptions(),
-          timeoutMs: getDiscoveryTimeoutMs(),
-          signal,
-          headers: auth.headers,
-          silent: !isVerboseDiscovery(),
-          onProgress: isVerboseDiscovery() ? (message) => process.stderr.write(`LiteLLM: ${message}\n`) : undefined,
-        });
-        signal?.throwIfAborted();
-        return { ...result, baseUrl: `${normalizeBaseUrl(auth.baseUrl)}/v1` };
+        return runDiscovery(await authForCredential(definition, credential), signal);
       },
     });
     Object.assign(provider, { headers: resolveHeaders(definition) });
