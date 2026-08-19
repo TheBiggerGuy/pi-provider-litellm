@@ -47,6 +47,7 @@ const ENV_OFFLINE = "LITELLM_OFFLINE";
 const ENV_VERBOSE_DISCOVERY = "LITELLM_VERBOSE_DISCOVERY";
 const ENV_MODELS_DEV = "LITELLM_MODELS_DEV";
 const DEFAULT_TIMEOUT_MS = 5000;
+const SEED_TIMEOUT_MS = 3000;
 const LOGIN_TIMEOUT_MS = 10_000;
 const CLI_SSO_POLL_INTERVAL_MS = 2_000;
 const CLI_SSO_EXPIRES_IN_SECONDS = 600;
@@ -419,6 +420,16 @@ function isOffline(): boolean {
 /** Pi disables all model network access when PI_OFFLINE is set; activation must honour it too. */
 function isHostOffline(): boolean {
   return process.env.PI_OFFLINE !== undefined;
+}
+
+/**
+ * Absolute budget for activation-time discovery. Pi cannot paint its UI until every extension has
+ * activated, so this is deliberately capped rather than following LITELLM_DISCOVERY_TIMEOUT_MS,
+ * which is a per-request timeout that deployments raise to tens of seconds. Missing the budget only
+ * costs the startup seed; Pi's own refresh and /model still populate the catalog.
+ */
+function getSeedTimeoutMs(): number {
+  return Math.min(getDiscoveryTimeoutMs(), SEED_TIMEOUT_MS);
 }
 
 function isVerboseDiscovery(): boolean {
@@ -1180,7 +1191,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       // executeHelpers:false — activation must never run the user's key helper as a side effect,
       // so helper-backed setups keep waiting for Pi's own refresh.
       const auth = await authForCredential(definition, stored, false);
-      const result = await runDiscovery(auth, AbortSignal.timeout(getDiscoveryTimeoutMs() * 2));
+      const result = await runDiscovery(auth, AbortSignal.timeout(getSeedTimeoutMs()));
       return toNativeModels(definition.name, result.baseUrl, result.models);
     } catch (error) {
       // No credentials yet is the normal unconfigured case; anything else is worth one line.
