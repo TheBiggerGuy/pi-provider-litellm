@@ -32,7 +32,7 @@ async function withPi(run: (session: Session) => Promise<void>): Promise<void> {
   }
 }
 
-async function submit(session: Session, text: string, autocompleteText?: string): Promise<void> {
+async function submit(session: Session, text: string, autocompleteText?: string | RegExp): Promise<void> {
   await session.keyboard.type(text);
   if (text.startsWith("/")) {
     await session.screen.waitForText(text, { timeoutMs: waitTimeoutMs });
@@ -124,7 +124,9 @@ describe.skipIf(!enabled)("interactive Pi terminal smoke", () => {
         });
         expect(startup.text).not.toContain("Warning: No models available");
 
-        await submit(session, "/login litellm", "LiteLLM · subscription/API key");
+        // The entry's suffix reflects auth status, which now differs because activation already
+        // configured the provider; match the provider entry itself rather than the suffix.
+        await submit(session, "/login litellm", /LiteLLM\s*·/);
         await selectApiKeyAuthMethod(session);
         await session.screen.waitForText("Enter LiteLLM proxy URL", { timeoutMs: waitTimeoutMs });
         await submit(session, process.env.LITELLM_BASE_URL ?? "http://127.0.0.1:4000");
