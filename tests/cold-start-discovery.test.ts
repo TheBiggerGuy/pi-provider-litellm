@@ -7,7 +7,14 @@ import { createPi, loadExtension } from "./test-helpers.js";
 
 vi.unmock("@earendil-works/pi-coding-agent");
 
-const ENV_KEYS = ["LITELLM_BASE_URL", "LITELLM_API_KEY", "LITELLM_OFFLINE", "LITELLM_MODELS_DEV", "PI_OFFLINE"];
+const ENV_KEYS = [
+  "LITELLM_BASE_URL",
+  "LITELLM_API_KEY",
+  "LITELLM_OFFLINE",
+  "LITELLM_MODELS_DEV",
+  "LITELLM_DISCOVERY_TIMEOUT_MS",
+  "PI_OFFLINE",
+];
 const ORIGINAL_ENV = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -124,6 +131,26 @@ describe("cold start discovery (issue #137)", () => {
     expect(runtime.getProvider("litellm")).toBeDefined();
     expect(runtime.getModels("litellm")).toEqual([]);
   });
+
+  it("gives up quickly when the proxy hangs, whatever the discovery timeout is", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-litellm-cold-hang-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "env-key";
+    // Deployments raise this per-request timeout; activation must not inherit it, because Pi
+    // cannot paint its UI until every extension has activated.
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "60000";
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        }),
+    );
+
+    const startedAt = Date.now();
+    await startup(agentDir);
+
+    expect(Date.now() - startedAt).toBeLessThan(15_000);
+  }, 70_000);
 
   it("does not discover when no credentials are configured", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-litellm-cold-nocreds-"));
