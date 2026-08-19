@@ -177,7 +177,8 @@ describe("LiteLLM smoke workflow", () => {
     expect(terminalSmoke).toContain('it(\n    "logs in and selects LiteLLM models"');
     expect(terminalSmoke).toContain("process.env.PI_CODING_AGENT_DIR?.trim()");
     expect(terminalSmoke).toContain("if (!configuredAgentDir) await rm(agentDir, { force: true, recursive: true });");
-    expect(terminalSmoke).toContain('waitForText("Warning: No models available"');
+    // Discovery during activation means a cold start no longer warns; gate on the resource block.
+    expect(terminalSmoke).toContain('waitForText("[Extensions]"');
     expect(terminalSmoke).toContain('waitUntil((snapshot) => !snapshot.text.includes("Enter API key")');
     expect(terminalSmoke).not.toContain('execFileAsync(piPath, ["-e", extensionPath, "--list-models", "litellm"]');
     expect(terminalSmoke).not.toContain('"--provider",\n        "litellm"');

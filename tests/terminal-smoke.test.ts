@@ -116,7 +116,10 @@ describe.skipIf(!enabled)("interactive Pi terminal smoke", () => {
     "logs in and selects LiteLLM models",
     async () => {
       await withPi(async (session) => {
-        await session.screen.waitForText("Warning: No models available", { timeoutMs: waitTimeoutMs });
+        // Wait for Pi to paint its startup resource block. This replaces the old wait for
+        // "Warning: No models available", which activation-time discovery now prevents (#137).
+        await session.screen.waitForText("[Extensions]", { timeoutMs: waitTimeoutMs });
+        await session.screen.waitForIdle({ timeoutMs: waitTimeoutMs });
         await submit(session, "/login litellm", "LiteLLM · subscription/API key");
         await selectApiKeyAuthMethod(session);
         await session.screen.waitForText("Enter LiteLLM proxy URL", { timeoutMs: waitTimeoutMs });
