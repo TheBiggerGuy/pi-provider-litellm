@@ -11,7 +11,6 @@ const ENV_KEYS = [
   "LITELLM_BASE_URL",
   "LITELLM_API_KEY",
   "LITELLM_OFFLINE",
-  "LITELLM_MODELS_DEV",
   "LITELLM_DISCOVERY_TIMEOUT_MS",
   "PI_OFFLINE",
 ];
@@ -49,7 +48,6 @@ describe("cold start discovery (issue #137)", () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-litellm-cold-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
     process.env.LITELLM_API_KEY = "env-key";
-    process.env.LITELLM_MODELS_DEV = "0";
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/model/info")) {
@@ -66,7 +64,6 @@ describe("cold start discovery (issue #137)", () => {
 
   it("populates the catalog from a stored /login credential", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-litellm-cold-stored-"));
-    process.env.LITELLM_MODELS_DEV = "0";
     await writeFile(
       join(agentDir, "auth.json"),
       JSON.stringify({
