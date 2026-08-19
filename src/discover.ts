@@ -1,9 +1,7 @@
-import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import type { BuiltinProvider } from "@earendil-works/pi-ai/providers/all";
-import { writeJsonAtomic } from "./cache.js";
 import type {
   DiscoveredModel,
   DiscoveryOptions,
@@ -19,37 +17,6 @@ const DEFAULT_TIMEOUT_MS = 5000;
 const DEFAULT_CONTEXT_WINDOW = 128_000;
 const DEFAULT_MAX_TOKENS = 16_384;
 const KNOWN_PROVIDER_SET = new Set<string>(getProviders());
-const MODELS_DEV_URL = "https://models.dev/api.json";
-const MODELS_DEV_CACHE_TTL_MS = 28 * 24 * 60 * 60 * 1000;
-
-interface ModelsDevModel {
-  name?: string;
-  reasoning?: boolean;
-  modalities?: {
-    input?: string[];
-  };
-  limit?: {
-    context?: number;
-    input?: number;
-    output?: number;
-  };
-  cost?: {
-    input?: number;
-    output?: number;
-    cache_read?: number;
-    cache_write?: number;
-  };
-}
-
-type ModelsDevResponse = Record<string, { models?: Record<string, ModelsDevModel> }>;
-
-interface ModelsDevCacheFile {
-  fetchedAt: number;
-  catalog: ModelsDevResponse;
-}
-
-const modelsDevCaches = new Map<string, ModelsDevCacheFile>();
-const modelsDevRefreshes = new Map<string, Promise<ModelsDevResponse | undefined>>();
 
 export function normalizeBaseUrl(input: string): string {
   const url = new URL(input);
@@ -213,48 +180,6 @@ function mapModelInfoCost(
   };
 }
 
-function getFallbackProviderAndModel(id: string, ownedBy?: string): { provider?: string; modelId: string } {
-  const [prefix, ...rest] = id.split("/");
-  const prefixProvider = toKnownProvider(prefix);
-  if (prefixProvider && rest.length > 0) {
-    return { provider: prefixProvider, modelId: rest.join("/") };
-  }
-  return { provider: toKnownProvider(ownedBy), modelId: id };
-}
-
-function findModelsDevModel(
-  catalog: ModelsDevResponse | undefined,
-  id: string,
-  ownedBy?: string,
-): ModelsDevModel | undefined {
-  const { provider, modelId } = getFallbackProviderAndModel(id, ownedBy);
-  if (!provider) return undefined;
-  const models = catalog?.[provider]?.models;
-  return models && Object.hasOwn(models, modelId) ? models[modelId] : undefined;
-}
-
-function awaitWithSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise<T>((resolve, reject) => {
-    const cleanup = () => signal.removeEventListener("abort", onAbort);
-    const onAbort = () => {
-      cleanup();
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(
-      (value) => {
-        cleanup();
-        resolve(value);
-      },
-      (error) => {
-        cleanup();
-        reject(error);
-      },
-    );
-  });
-}
 async function fetchJson<T>(
   url: string,
   apiKey: string,
@@ -270,154 +195,6 @@ async function fetchJson<T>(
   if (!response.ok) return { ok: false, status: response.status };
   const data = (await response.json()) as T;
   return { ok: true, data };
-}
-
-async function fetchPublicJson<T>(url: string, options: DiscoveryOptions): Promise<T> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const response = await fetch(url, {
-    headers: { Accept: "application/json" },
-    signal: options.signal
-      ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)])
-      : AbortSignal.timeout(timeoutMs),
-  });
-  if (!response.ok) throw new Error(`${url} returned ${response.status}`);
-  return (await response.json()) as T;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function finiteNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function normalizeModelsDevCatalog(value: unknown): ModelsDevResponse | undefined {
-  if (!isRecord(value)) return undefined;
-  const catalog: ModelsDevResponse = {};
-  for (const [providerId, providerValue] of Object.entries(value)) {
-    if (!isRecord(providerValue) || !isRecord(providerValue.models)) continue;
-    const models: Record<string, ModelsDevModel> = {};
-    for (const [modelId, modelValue] of Object.entries(providerValue.models)) {
-      if (!isRecord(modelValue)) continue;
-      const model: ModelsDevModel = {};
-      if (typeof modelValue.name === "string") model.name = modelValue.name;
-      if (typeof modelValue.reasoning === "boolean") model.reasoning = modelValue.reasoning;
-      if (isRecord(modelValue.modalities) && Array.isArray(modelValue.modalities.input)) {
-        const input = modelValue.modalities.input.filter((entry): entry is string => typeof entry === "string");
-        if (input.length > 0) model.modalities = { input };
-      }
-      if (isRecord(modelValue.limit)) {
-        const limit: NonNullable<ModelsDevModel["limit"]> = {};
-        const context = finiteNumber(modelValue.limit.context);
-        const input = finiteNumber(modelValue.limit.input);
-        const output = finiteNumber(modelValue.limit.output);
-        if (context !== undefined) limit.context = context;
-        if (input !== undefined) limit.input = input;
-        if (output !== undefined) limit.output = output;
-        if (Object.keys(limit).length > 0) model.limit = limit;
-      }
-      if (isRecord(modelValue.cost)) {
-        const cost: NonNullable<ModelsDevModel["cost"]> = {};
-        const input = finiteNumber(modelValue.cost.input);
-        const output = finiteNumber(modelValue.cost.output);
-        const cacheRead = finiteNumber(modelValue.cost.cache_read);
-        const cacheWrite = finiteNumber(modelValue.cost.cache_write);
-        if (input !== undefined) cost.input = input;
-        if (output !== undefined) cost.output = output;
-        if (cacheRead !== undefined) cost.cache_read = cacheRead;
-        if (cacheWrite !== undefined) cost.cache_write = cacheWrite;
-        if (Object.keys(cost).length > 0) model.cost = cost;
-      }
-      models[modelId] = model;
-    }
-    catalog[providerId] = { models };
-  }
-  return catalog;
-}
-
-async function readModelsDevCache(path: string): Promise<ModelsDevCacheFile | undefined> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-    if (
-      !isRecord(parsed) ||
-      typeof parsed.fetchedAt !== "number" ||
-      !Number.isFinite(parsed.fetchedAt) ||
-      parsed.fetchedAt < 0 ||
-      parsed.fetchedAt > Date.now()
-    ) {
-      return undefined;
-    }
-    const catalog = normalizeModelsDevCatalog(parsed.catalog);
-    return catalog ? { fetchedAt: parsed.fetchedAt, catalog } : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function refreshModelsDevCatalog(key: string, options: DiscoveryOptions): Promise<ModelsDevResponse | undefined> {
-  const active = modelsDevRefreshes.get(key);
-  if (active) return active;
-  const refresh = (async () => {
-    try {
-      const catalog = normalizeModelsDevCatalog(await fetchPublicJson<unknown>(MODELS_DEV_URL, options));
-      if (!catalog) return undefined;
-      const cache = { fetchedAt: Date.now(), catalog };
-      modelsDevCaches.set(key, cache);
-      if (options.modelsDevCachePath) {
-        await writeJsonAtomic(options.modelsDevCachePath, cache).catch(() => undefined);
-      }
-      return catalog;
-    } catch {
-      return undefined;
-    } finally {
-      modelsDevRefreshes.delete(key);
-    }
-  })();
-  modelsDevRefreshes.set(key, refresh);
-  return refresh;
-}
-
-async function getModelsDevCatalog(options: DiscoveryOptions): Promise<ModelsDevResponse | undefined> {
-  const key = options.modelsDevCachePath ?? MODELS_DEV_URL;
-  const refreshOptions = { ...options, timeoutMs: DEFAULT_TIMEOUT_MS, signal: undefined };
-  let cache = modelsDevCaches.get(key);
-  if (!cache && options.modelsDevCachePath) {
-    cache = await readModelsDevCache(options.modelsDevCachePath);
-    if (cache) modelsDevCaches.set(key, cache);
-  }
-  if (!cache) {
-    const timeout = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-    return awaitWithSignal(
-      refreshModelsDevCatalog(key, refreshOptions),
-      options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
-    );
-  }
-  if (Date.now() - cache.fetchedAt < MODELS_DEV_CACHE_TTL_MS) return cache.catalog;
-  void refreshModelsDevCatalog(key, refreshOptions);
-  return cache.catalog;
-}
-
-function mapModelsDevMetadata(model: ModelsDevModel | undefined): Partial<DiscoveredModel> {
-  if (!model) return {};
-  const metadata: Partial<DiscoveredModel> = {};
-  if (model.name) metadata.name = model.name;
-  if (model.reasoning !== undefined) metadata.reasoning = model.reasoning;
-  if (model.modalities?.input) {
-    metadata.input = model.modalities.input.includes("image") ? ["text", "image"] : ["text"];
-  }
-  const contextWindow = model.limit?.context ?? model.limit?.input;
-  if (contextWindow !== undefined) metadata.contextWindow = contextWindow;
-  if (model.limit?.output !== undefined) metadata.maxTokens = model.limit.output;
-  if (model.cost) {
-    metadata.cost = {
-      input: model.cost.input ?? 0,
-      output: model.cost.output ?? 0,
-      cacheRead: model.cost.cache_read ?? 0,
-      cacheWrite: model.cost.cache_write ?? 0,
-    };
-  }
-  return metadata;
 }
 
 function mapReasoningEfforts(
@@ -490,23 +267,19 @@ function mapFromHealthEndpoint(entry: { model?: string }): DiscoveredModel | und
   };
 }
 
-function mapFromModelsList(
-  entry: ModelsListEntry,
-  modelsDev: ModelsDevResponse | undefined,
-): DiscoveredModel | undefined {
+function mapFromModelsList(entry: ModelsListEntry): DiscoveredModel | undefined {
   const id = entry.id;
   if (!id) return undefined;
   const catalogModel = findCatalogModel(id, entry.owned_by);
-  const modelsDevMetadata = mapModelsDevMetadata(findModelsDevModel(modelsDev, id, entry.owned_by));
   return {
     id,
-    name: modelsDevMetadata.name ?? catalogModel?.name ?? `${id} (no metadata)`,
-    reasoning: modelsDevMetadata.reasoning ?? catalogModel?.reasoning ?? false,
+    name: catalogModel?.name ?? `${id} (no metadata)`,
+    reasoning: catalogModel?.reasoning ?? false,
     thinkingLevelMap: catalogModel?.thinkingLevelMap,
-    input: modelsDevMetadata.input ?? catalogModel?.input ?? ["text"],
-    cost: modelsDevMetadata.cost ?? catalogModel?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: modelsDevMetadata.contextWindow ?? catalogModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-    maxTokens: modelsDevMetadata.maxTokens ?? catalogModel?.maxTokens ?? DEFAULT_MAX_TOKENS,
+    input: catalogModel?.input ?? ["text"],
+    cost: catalogModel?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: catalogModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    maxTokens: catalogModel?.maxTokens ?? DEFAULT_MAX_TOKENS,
     compat: buildCompat(id),
   };
 }
@@ -584,15 +357,10 @@ export async function discoverModels(
     // Ref: docs.litellm.ai/docs/proxy/model_discovery
     if (models.some((m) => m.id.includes("*"))) {
       progress?.("/model/info has wildcard entries, expanding via /v1/models...");
-      let modelsDev: ModelsDevResponse | undefined;
-      if (options.modelsDev !== false) {
-        progress?.("Loading models.dev catalog for metadata enrichment...");
-        modelsDev = await getModelsDevCatalog(options);
-      }
       const listResult = await fetchJson<ModelsListResponse>(`${base}/v1/models`, apiKey, options);
       if (listResult.ok) {
         const expanded = (listResult.data.data ?? [])
-          .map((entry) => mapFromModelsList(entry, modelsDev))
+          .map(mapFromModelsList)
           .filter((m): m is DiscoveredModel => m !== undefined && !m.id.includes("*"));
         const seen = new Set<string>(models.map((m) => m.id));
         models = [...models.filter((m) => !m.id.includes("*")), ...expanded.filter((m) => !seen.has(m.id))];
@@ -613,13 +381,8 @@ export async function discoverModels(
     }
     throw new Error(`/v1/models returned ${listResult.status}`);
   }
-  let modelsDev: ModelsDevResponse | undefined;
-  if (options.modelsDev !== false) {
-    progress?.("Loading models.dev catalog for metadata enrichment...");
-    modelsDev = await getModelsDevCatalog(options);
-  }
   const models = (listResult.data.data ?? [])
-    .map((entry) => mapFromModelsList(entry, modelsDev))
+    .map(mapFromModelsList)
     .filter((m): m is DiscoveredModel => m !== undefined);
   return { source: "models_list", models: deduplicateModels(models) };
 }

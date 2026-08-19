@@ -33,7 +33,7 @@ import { getSessionIdFromFile } from "./litellm.js";
 import { createMcpToolDefinitions } from "./mcp-tools.js";
 import { createLiteLLMProvider, toNativeModels } from "./provider.js";
 import { createSkillsPromptSection, createSkillToolDefinitions, listSkills } from "./skills.js";
-import type { DiscoveryOptions, LiteLLMApi, LiteLLMRuntimeAuth, ResolvedCredentials } from "./types.js";
+import type { LiteLLMApi, LiteLLMRuntimeAuth, ResolvedCredentials } from "./types.js";
 
 const PROVIDER_NAME = "litellm";
 const SETTINGS_KEY = "litellm";
@@ -45,14 +45,12 @@ const ENV_TIMEOUT = "LITELLM_DISCOVERY_TIMEOUT_MS";
 const ENV_CLI_JWT_EXPIRATION_HOURS = "LITELLM_CLI_JWT_EXPIRATION_HOURS";
 const ENV_OFFLINE = "LITELLM_OFFLINE";
 const ENV_VERBOSE_DISCOVERY = "LITELLM_VERBOSE_DISCOVERY";
-const ENV_MODELS_DEV = "LITELLM_MODELS_DEV";
 const DEFAULT_TIMEOUT_MS = 5000;
 const SEED_TIMEOUT_MS = 3000;
 const LOGIN_TIMEOUT_MS = 10_000;
 const CLI_SSO_POLL_INTERVAL_MS = 2_000;
 const CLI_SSO_EXPIRES_IN_SECONDS = 600;
 const DEFAULT_CLI_JWT_EXPIRATION_HOURS = 24;
-const MODELS_DEV_CACHE_FILENAME = "litellm-models-dev.json";
 const TOKEN_REFRESH_LEAD_MS = 5 * 60 * 1000;
 const PERMANENT_TOKEN_EXPIRES_AT = Number.MAX_SAFE_INTEGER;
 const EXPIRE_TOKEN_IMMEDIATELY = 0;
@@ -75,13 +73,6 @@ type ProviderDefinition = {
   useGcloudTokenAuth: boolean;
   enableOAuth: boolean;
 };
-
-function getModelsDevDiscoveryOptions(): Pick<DiscoveryOptions, "modelsDev" | "modelsDevCachePath"> {
-  return {
-    modelsDev: process.env[ENV_MODELS_DEV] !== "0",
-    modelsDevCachePath: join(getAgentDir(), MODELS_DEV_CACHE_FILENAME),
-  };
-}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -1170,7 +1161,6 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   async function runDiscovery(auth: LiteLLMRuntimeAuth, signal?: AbortSignal) {
     const result = await discoverModels(auth.baseUrl, auth.apiKey, {
-      ...getModelsDevDiscoveryOptions(),
       timeoutMs: getDiscoveryTimeoutMs(),
       signal,
       headers: auth.headers,
