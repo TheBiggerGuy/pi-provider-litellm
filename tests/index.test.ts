@@ -237,7 +237,8 @@ describe("extension startup", () => {
   it("keeps one provider registration across Pi-managed refresh", async () => {
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
     process.env.LITELLM_API_KEY = "sk-test";
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    // A fresh Response per call: activation discovers too, and a body can only be read once.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       jsonResponse(200, { data: [{ model_name: "fresh-model", model_info: { mode: "chat" } }] }),
     );
     const extension = await loadExtension(await makeAgentDir());
@@ -327,6 +328,8 @@ describe("extension startup", () => {
     const extension = await loadExtension(await makeAgentDir());
     const pi = createPi();
     await extension(pi);
+    // Activation attempts its own discovery; assert only on what the refresh requests.
+    requestedUrls.length = 0;
     const stored = {
       id: "stored-model",
       name: "Stored model",

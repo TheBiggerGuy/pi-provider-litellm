@@ -188,6 +188,9 @@ describe("feature parity", () => {
     const extension = await loadExtension(agentDir);
     const pi = createPi();
     await extension(pi);
+    // Activation seeds the catalog; count only the refreshes this test drives.
+    modelInfoRequests = 0;
+    fetchMock.mockClear();
 
     const firstRefresh = refreshProvider(pi);
     await vi.waitFor(() =>
@@ -235,6 +238,8 @@ describe("feature parity", () => {
     const extension = await loadExtension(agentDir);
     const pi = createPi();
     await extension(pi);
+    // Activation seeds the catalog; count only the refreshes this test drives.
+    fetchMock.mockClear();
     const firstRefresh = refreshProvider(pi, true, firstAbort.signal);
     await vi.waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith("https://first.example.com/mcp-rest/tools/list", expect.anything()),
@@ -279,6 +284,9 @@ describe("feature parity", () => {
     const extension = await loadExtension(agentDir);
     const pi = createPi();
     await extension(pi);
+    // Activation seeds the catalog; count only the refreshes this test drives.
+    modelInfoRequests = 0;
+    fetchMock.mockClear();
     const firstRefresh = refreshProvider(pi);
     await vi.waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith("https://litellm.example.com/mcp-rest/tools/list", expect.anything()),
@@ -475,16 +483,22 @@ describe("feature parity", () => {
     );
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
     process.env.LITELLM_API_KEY = "sk-test";
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const requestedUrls: string[] = [];
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      requestedUrls.push(String(input));
+      return jsonResponse(200, { data: [] });
+    });
 
     const extension = await loadExtension(agentDir);
     const pi = createPi();
     await extension(pi);
+    fetchMock.mockClear();
 
     expect(pi.tools.map((tool) => tool.name)).not.toContain("litellm_skill_list");
     const beforeAgentStart = pi.handlers.get("before_agent_start")?.[0];
     await expect(beforeAgentStart?.({ systemPrompt: "Base prompt" }, {})).resolves.toBeUndefined();
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(requestedUrls.some((url) => url.includes("/skills"))).toBe(false);
   });
 
   it("disables LiteLLM MCP discovery through settings", async () => {
@@ -506,7 +520,8 @@ describe("feature parity", () => {
     await extension(pi);
     await refreshProvider(pi);
 
-    expect(requestedUrls).toEqual(["https://litellm.example.com/model/info"]);
+    // Activation seeds the catalog, then the refresh discovers again; neither may touch MCP.
+    expect(new Set(requestedUrls)).toEqual(new Set(["https://litellm.example.com/model/info"]));
     expect(pi.tools.map((tool) => tool.name)).toContain("litellm_skill_list");
     expect(pi.tools.some((tool) => tool.name.startsWith("mcp_"))).toBe(false);
   });
