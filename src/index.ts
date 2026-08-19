@@ -1264,14 +1264,24 @@ export default async function (pi: ExtensionAPI): Promise<void> {
     );
   });
 
+  // Skills enrichment is best-effort: an expired credential or an unreachable proxy must not
+  // report an extension error on every turn. The failing model request states the real problem.
   pi.on("before_agent_start", async (event, ctx) => {
     defaultRuntimeAuth = undefined;
     if (!skillsEnabled || discoveryDisabledReason()) return;
-    const auth = await getRuntimeAuth(ctx);
-    if (!auth) return;
-    defaultRuntimeAuth = auth;
-    const skills = await listSkills(defaultRuntimeAuth.baseUrl, defaultRuntimeAuth.apiKey, defaultRuntimeAuth.headers);
-    const section = createSkillsPromptSection(skills);
+    let section: string | undefined;
+    try {
+      const auth = await getRuntimeAuth(ctx);
+      if (!auth) return;
+      defaultRuntimeAuth = auth;
+      const skills = await listSkills(auth.baseUrl, auth.apiKey, auth.headers);
+      section = createSkillsPromptSection(skills);
+    } catch (error) {
+      if (isVerboseDiscovery()) {
+        process.stderr.write(`LiteLLM: skipping Skills (${error instanceof Error ? error.message : String(error)}).\n`);
+      }
+      return;
+    }
     if (!section) return;
     return { systemPrompt: `${event.systemPrompt}\n\n${section}` };
   });
