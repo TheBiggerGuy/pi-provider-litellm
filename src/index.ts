@@ -472,7 +472,50 @@ function getProviderDefinitions(settings: Record<string, unknown> | undefined): 
   return definitions;
 }
 
-async function loginApiKey(interaction: AuthInteraction, allowInsecureHttp = false): Promise<ApiKeyCredential> {
+const DIFFERENT_BASE_URL = "enter-a-different-url";
+
+/**
+ * The proxy URL is the one thing a user has to retype on every re-login, and an expired SSO token is
+ * the common reason to re-login. Offer whatever we already know: settings, env, or the credential the
+ * dead session was issued against.
+ */
+function knownBaseUrl(definition: ProviderDefinition): { url: string; source: string } | undefined {
+  const stored = readStoredCredential(definition.name, join(getAgentDir(), "auth.json"));
+  const candidates: [string | undefined, string][] = [
+    [cleanConfig(definition.baseUrl), "configured"],
+    [definition.useDefaultEnv ? cleanConfig(process.env[ENV_BASE_URL]) : undefined, `$${ENV_BASE_URL}`],
+    [
+      stored?.type === "oauth"
+        ? cleanConfig(typeof stored.baseUrl === "string" ? stored.baseUrl : undefined)
+        : cleanConfig(stored?.env?.[ENV_BASE_URL]),
+      "previous login",
+    ],
+  ];
+  for (const [candidate, source] of candidates) {
+    if (!candidate) continue;
+    try {
+      return { url: normalizeBaseUrl(candidate, definition.allowInsecureHttp), source };
+    } catch {
+      // A URL we could not use anyway is not worth offering; try the next candidate.
+    }
+  }
+  return undefined;
+}
+
+async function promptBaseUrl(interaction: AuthInteraction, definition: ProviderDefinition): Promise<string> {
+  const known = knownBaseUrl(definition);
+  if (known) {
+    const choice = await interaction.prompt({
+      type: "select",
+      message: "LiteLLM proxy URL:",
+      // Pi's login selector renders labels only, so the source has to ride along in the label.
+      options: [
+        { id: known.url, label: `${known.url} (${known.source})` },
+        { id: DIFFERENT_BASE_URL, label: "Enter a different URL…" },
+      ],
+    });
+    if (choice === known.url) return known.url;
+  }
   const rawBaseUrl = (
     await interaction.prompt({
       type: "text",
@@ -481,9 +524,14 @@ async function loginApiKey(interaction: AuthInteraction, allowInsecureHttp = fal
     })
   ).trim();
   if (!rawBaseUrl) throw new Error("Base URL is required");
+  return normalizeBaseUrl(rawBaseUrl, definition.allowInsecureHttp);
+}
+
+async function loginApiKey(interaction: AuthInteraction, definition: ProviderDefinition): Promise<ApiKeyCredential> {
+  const baseUrl = await promptBaseUrl(interaction, definition);
   const key = (await interaction.prompt({ type: "secret", message: "Enter API key:" })).trim();
   if (!key) throw new Error("Both base URL and API key are required");
-  return { type: "api_key", key, env: { [ENV_BASE_URL]: normalizeBaseUrl(rawBaseUrl, allowInsecureHttp) } };
+  return { type: "api_key", key, env: { [ENV_BASE_URL]: baseUrl } };
 }
 
 type CliSsoStart = { loginId: string; pollSecret: string; userCode: string; expiresInSeconds: number };
@@ -636,20 +684,9 @@ async function loginWithPastedToken(
   return { type: "oauth", access, refresh: "", expires, baseUrl };
 }
 
-async function loginOAuth(
-  interaction: AuthInteraction,
-  headers?: Record<string, string>,
-  allowInsecureHttp = false,
-): Promise<OAuthCredential> {
-  const rawBaseUrl = (
-    await interaction.prompt({
-      type: "text",
-      message: "Enter LiteLLM proxy URL (no trailing /v1):",
-      placeholder: "https://litellm.example.com",
-    })
-  ).trim();
-  if (!rawBaseUrl) throw new Error("Base URL is required");
-  const baseUrl = normalizeBaseUrl(rawBaseUrl, allowInsecureHttp);
+async function loginOAuth(interaction: AuthInteraction, definition: ProviderDefinition): Promise<OAuthCredential> {
+  const headers = resolveHeaders(definition);
+  const baseUrl = await promptBaseUrl(interaction, definition);
   const cliSso = await startCliSso(baseUrl, interaction.signal, headers);
   if (!cliSso) return loginWithPastedToken(interaction, baseUrl, headers);
   interaction.notify({
@@ -753,10 +790,7 @@ function createProviderAuth(definition: ProviderDefinition): ProviderAuth {
   return {
     apiKey: {
       name: `${definition.displayName} API key`,
-      login:
-        definition.name === PROVIDER_NAME
-          ? (interaction) => loginApiKey(interaction, definition.allowInsecureHttp)
-          : undefined,
+      login: definition.name === PROVIDER_NAME ? (interaction) => loginApiKey(interaction, definition) : undefined,
       check: async ({ ctx, credential }) => {
         const baseUrl =
           credential?.env?.[ENV_BASE_URL] ??
@@ -794,7 +828,7 @@ function createProviderAuth(definition: ProviderDefinition): ProviderAuth {
       ? {
           name: "LiteLLM SSO",
           loginLabel: "Sign in with LiteLLM SSO",
-          login: (interaction) => loginOAuth(interaction, resolveHeaders(definition), definition.allowInsecureHttp),
+          login: (interaction) => loginOAuth(interaction, definition),
           refresh: async (credential, signal) => ({
             ...(await refreshLiteLLM(credential, signal)),
             type: "oauth" as const,

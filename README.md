@@ -44,12 +44,14 @@ To configure an API key, run `/login`, choose `Sign in with an API key`, then ch
 
 You'll be prompted for the base URL and API key. Credentials are persisted to `~/.pi/agent/auth.json`.
 
+If a proxy URL is already known — from `providers.<name>.baseUrl`, `LITELLM_BASE_URL`, or a previous login — pi offers it as the first option instead of asking you to retype it. Pick `Enter a different URL…` to point at another proxy.
+
 #### Enterprise SSO login
 
 If your LiteLLM proxy requires SSO/OAuth authentication (enterprise deployments), you can authenticate through LiteLLM's CLI SSO flow:
 
 1. Run `/login litellm` inside pi and select `Sign in with LiteLLM SSO`
-2. Enter the proxy URL
+2. Confirm the offered proxy URL, or enter one if this is the first login
 3. Pi displays a verification code and opens the LiteLLM SSO login URL automatically
 4. Authenticate in the browser and confirm the displayed code
 5. If your account belongs to multiple teams, select the team for this session in Pi

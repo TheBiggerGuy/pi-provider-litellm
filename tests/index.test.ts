@@ -1366,6 +1366,147 @@ describe("extension startup", () => {
   });
 });
 
+describe("login base URL reuse", () => {
+  const STORED_URL = "https://stored.example.com";
+
+  async function agentDirWithStoredOAuth(): Promise<string> {
+    const agentDir = await makeAgentDir();
+    await writeFile(
+      join(agentDir, "auth.json"),
+      JSON.stringify({
+        litellm: { type: "oauth", access: "expired-token", refresh: "", expires: 0, baseUrl: STORED_URL },
+      }),
+      "utf8",
+    );
+    return agentDir;
+  }
+
+  it("offers the stored credential's base URL instead of asking for it again", async () => {
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    delete process.env.LITELLM_BASE_URL;
+    const extension = await loadExtension(await agentDirWithStoredOAuth());
+    const pi = createPi();
+    await extension(pi);
+
+    const messages: string[] = [];
+    const credential = await loginOAuth(pi.providers[0]!, {
+      onPrompt: async (options) => {
+        messages.push(options.message);
+        if (options.options) return options.options.find((option) => option.id === STORED_URL)!.id;
+        return options.type === "secret" ? "sk-sso-token" : "n";
+      },
+      signal: new AbortController().signal,
+    });
+
+    expect(credential?.baseUrl).toBe(STORED_URL);
+    expect(messages.some((message) => message.includes("Enter LiteLLM proxy URL"))).toBe(false);
+  });
+
+  it("names where the offered base URL came from", async () => {
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    delete process.env.LITELLM_BASE_URL;
+    const extension = await loadExtension(await agentDirWithStoredOAuth());
+    const pi = createPi();
+    await extension(pi);
+
+    let offered: readonly { id: string; label: string; description?: string }[] | undefined;
+    await loginOAuth(pi.providers[0]!, {
+      onPrompt: async (options) => {
+        if (options.options) {
+          offered = options.options;
+          return options.options.find((option) => option.id === STORED_URL)!.id;
+        }
+        return options.type === "secret" ? "sk-sso-token" : "n";
+      },
+      signal: new AbortController().signal,
+    });
+
+    expect(offered?.map((option) => option.label)).toEqual([
+      `${STORED_URL} (previous login)`,
+      "Enter a different URL…",
+    ]);
+    expect(offered?.[0]?.id).toBe(STORED_URL);
+  });
+
+  it("still asks for a URL when the offered one is declined", async () => {
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    delete process.env.LITELLM_BASE_URL;
+    const extension = await loadExtension(await agentDirWithStoredOAuth());
+    const pi = createPi();
+    await extension(pi);
+
+    const types: string[] = [];
+    const credential = await loginOAuth(pi.providers[0]!, {
+      onPrompt: async (options) => {
+        types.push(options.type);
+        if (options.options) return options.options.find((option) => option.id !== STORED_URL)!.id;
+        if (options.placeholder) return "https://other.example.com";
+        return options.type === "secret" ? "sk-sso-token" : "n";
+      },
+      signal: new AbortController().signal,
+    });
+
+    expect(types.slice(0, 2)).toEqual(["select", "text"]);
+    expect(credential?.baseUrl).toBe("https://other.example.com");
+  });
+
+  it("offers LITELLM_BASE_URL to the API-key login", async () => {
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    process.env.LITELLM_BASE_URL = "https://env.example.com";
+    const extension = await loadExtension(await makeAgentDir());
+    const pi = createPi();
+    await extension(pi);
+
+    const prompt = vi.fn(async (options: Parameters<AuthInteraction["prompt"]>[0]) =>
+      "options" in options ? options.options.find((option) => option.id === "https://env.example.com")!.id : "sk-typed",
+    );
+    const credential = await pi.providers[0]?.auth.apiKey?.login?.(interaction(prompt));
+
+    expect(credential?.env?.LITELLM_BASE_URL).toBe("https://env.example.com");
+    expect(prompt.mock.calls.map(([options]) => options.type)).toEqual(["select", "secret"]);
+  });
+
+  it("ignores a stored base URL that is no longer usable", async () => {
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    delete process.env.LITELLM_BASE_URL;
+    const agentDir = await makeAgentDir();
+    await writeFile(
+      join(agentDir, "auth.json"),
+      JSON.stringify({
+        litellm: { type: "api_key", key: "sk-old", env: { LITELLM_BASE_URL: "http://insecure.example.com" } },
+      }),
+      "utf8",
+    );
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const prompt = vi.fn(async (options: Parameters<AuthInteraction["prompt"]>[0]) =>
+      "placeholder" in options && options.placeholder ? "https://typed.example.com" : "sk-typed",
+    );
+    const credential = await pi.providers[0]?.auth.apiKey?.login?.(interaction(prompt));
+
+    expect(prompt.mock.calls.map(([options]) => options.type)).toEqual(["text", "secret"]);
+    expect(credential?.env?.LITELLM_BASE_URL).toBe("https://typed.example.com");
+  });
+
+  it("asks for the proxy URL when nothing is configured yet", async () => {
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    delete process.env.LITELLM_BASE_URL;
+    const extension = await loadExtension(await makeAgentDir());
+    const pi = createPi();
+    await extension(pi);
+
+    const prompt = vi.fn(async (options: Parameters<AuthInteraction["prompt"]>[0]) =>
+      "placeholder" in options && options.placeholder ? "https://typed.example.com" : "sk-typed",
+    );
+    const credential = await pi.providers[0]?.auth.apiKey?.login?.(interaction(prompt));
+
+    expect(prompt.mock.calls.map(([options]) => options.type)).toEqual(["text", "secret"]);
+    expect(credential?.env?.LITELLM_BASE_URL).toBe("https://typed.example.com");
+  });
+});
+
 describe("multi-provider hardening", () => {
   it("does not register the default env key for an alias missing its apiKey", async () => {
     const agentDir = await makeAgentDir();
