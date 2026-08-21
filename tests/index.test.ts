@@ -447,6 +447,37 @@ describe("extension startup", () => {
     expect(pi.providers[0]?.baseUrl).toBe("https://litellm.example.com/v1");
   });
 
+  it("uses explicitly allowed insecure HTTP for a provider", async () => {
+    const agentDir = await makeAgentDir();
+    await writeFile(
+      join(agentDir, "settings.json"),
+      JSON.stringify({
+        litellm: {
+          providers: {
+            litellm: {
+              baseUrl: "http://host.docker.internal",
+              apiKey: "sk-local",
+              allowInsecureHttp: true,
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    process.env.LITELLM_DISCOVERY_TIMEOUT_MS = "0";
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+
+    await extension(pi);
+
+    await expect(resolveApiKey(pi.providers[0]!)).resolves.toMatchObject({
+      auth: {
+        apiKey: "sk-local",
+        baseUrl: "http://host.docker.internal/v1",
+      },
+    });
+  });
+
   it("applies LiteLLM request compatibility hooks to configured provider aliases", async () => {
     const agentDir = await makeAgentDir();
     await writeFile(

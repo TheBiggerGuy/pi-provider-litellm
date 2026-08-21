@@ -18,12 +18,12 @@ const DEFAULT_CONTEXT_WINDOW = 128_000;
 const DEFAULT_MAX_TOKENS = 16_384;
 const KNOWN_PROVIDER_SET = new Set<string>(getProviders());
 
-export function normalizeBaseUrl(input: string): string {
+export function normalizeBaseUrl(input: string, allowInsecureHttp = false): string {
   const url = new URL(input);
   const hostname = url.hostname.toLowerCase();
   const loopback =
     hostname === "localhost" || hostname === "[::1]" || (isIP(hostname) === 4 && hostname.startsWith("127."));
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && (loopback || allowInsecureHttp))) {
     throw new Error("LiteLLM base URL must use HTTPS except for loopback hosts");
   }
   return input.replace(/\/+$/, "").replace(/\/v1\/?$/i, "");
@@ -332,7 +332,7 @@ export async function discoverModels(
   apiKey: string,
   options: DiscoveryOptions & { onProgress?: (message: string) => void; silent?: boolean } = {},
 ): Promise<DiscoveryResult> {
-  const base = normalizeBaseUrl(baseUrl);
+  const base = normalizeBaseUrl(baseUrl, options.allowInsecureHttp);
   const progress = options.silent ? undefined : options.onProgress;
   progress?.("Querying /model/info endpoint...");
   const infoResult = await fetchJson<ModelInfoResponse>(`${base}/model/info`, apiKey, options);

@@ -17,6 +17,14 @@ describe("normalizeBaseUrl", () => {
     expect(() => normalizeBaseUrl("http://litellm.example.com")).toThrow(/HTTPS/);
   });
 
+  it("allows an explicitly configured insecure endpoint", () => {
+    expect(normalizeBaseUrl("http://host.docker.internal/v1", true)).toBe("http://host.docker.internal");
+  });
+
+  it("does not allow other insecure protocols", () => {
+    expect(() => normalizeBaseUrl("ftp://host.docker.internal", true)).toThrow(/HTTPS/);
+  });
+
   it("strips trailing slashes", () => {
     expect(normalizeBaseUrl("https://x.example.com/")).toBe("https://x.example.com");
     expect(normalizeBaseUrl("https://x.example.com///")).toBe("https://x.example.com");

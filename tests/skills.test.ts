@@ -23,6 +23,17 @@ afterEach(() => {
 });
 
 describe("listSkills", () => {
+  it("uses an explicitly allowed insecure endpoint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { plugins: [] }));
+
+    await expect(listSkills("http://host.docker.internal", "sk-test", undefined, true)).resolves.toEqual([]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://host.docker.internal/claude-code/marketplace.json",
+      expect.any(Object),
+    );
+  });
+
   it("returns skills from the LiteLLM Skill Hub marketplace", async () => {
     const skills: LiteLLMSkill[] = [{ name: "terraform", description: "Terraform conventions", enabled: true }];
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { plugins: skills }));

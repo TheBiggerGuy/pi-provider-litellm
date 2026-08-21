@@ -8,6 +8,7 @@ export type LiteLLMRuntimeAuth = {
   baseUrl: string;
   apiKey: string;
   headers?: Record<string, string>;
+  allowInsecureHttp?: boolean;
 };
 
 export type DiscoveredModel = Omit<Model<"openai-completions">, "provider" | "api" | "baseUrl"> & {
@@ -23,6 +24,7 @@ export interface DiscoveryOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   headers?: Record<string, string>;
+  allowInsecureHttp?: boolean;
 }
 
 export interface ModelInfoEntry {

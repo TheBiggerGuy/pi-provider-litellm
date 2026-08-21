@@ -80,11 +80,12 @@ export async function discoverMcpTools(
   headers?: Record<string, string>,
   onProgress?: (message: string) => void,
   parentSignal?: AbortSignal,
+  allowInsecureHttp = false,
 ): Promise<LiteLLMMcpTool[]> {
   onProgress?.("Discovering MCP tools from server...");
   try {
     onProgress?.("Querying MCP tools/list endpoint...");
-    const response = await fetch(`${normalizeBaseUrl(baseUrl)}/mcp-rest/tools/list`, {
+    const response = await fetch(`${normalizeBaseUrl(baseUrl, allowInsecureHttp)}/mcp-rest/tools/list`, {
       headers: {
         ...headers,
         Authorization: `Bearer ${apiKey}`,
@@ -118,9 +119,10 @@ export async function executeMcpTool(
   toolName: string,
   args: Record<string, unknown>,
   headers?: Record<string, string>,
+  allowInsecureHttp = false,
 ): Promise<string> {
   for (let attempt = 0; attempt <= MCP_RETRY_ATTEMPTS; attempt++) {
-    const result = await executeMcpToolOnce(baseUrl, apiKey, serverId, toolName, args, headers);
+    const result = await executeMcpToolOnce(baseUrl, apiKey, serverId, toolName, args, headers, allowInsecureHttp);
     if (attempt < MCP_RETRY_ATTEMPTS && result.retryable) {
       await sleep(MCP_RETRY_DELAY_MS);
       continue;
@@ -137,11 +139,12 @@ async function executeMcpToolOnce(
   toolName: string,
   args: Record<string, unknown>,
   headers?: Record<string, string>,
+  allowInsecureHttp = false,
 ): Promise<McpExecutionResult> {
   try {
     let response: Response;
     try {
-      response = await fetch(`${normalizeBaseUrl(baseUrl)}/mcp-rest/tools/call`, {
+      response = await fetch(`${normalizeBaseUrl(baseUrl, allowInsecureHttp)}/mcp-rest/tools/call`, {
         method: "POST",
         headers: {
           ...headers,
@@ -211,6 +214,7 @@ export async function createMcpToolDefinitions(
     discoveryAuth.headers,
     onProgress,
     signal,
+    discoveryAuth.allowInsecureHttp,
   );
 
   return tools.map((mcpTool) => {
@@ -239,6 +243,7 @@ export async function createMcpToolDefinitions(
           mcpTool.name,
           args,
           auth.headers,
+          auth.allowInsecureHttp,
         );
         return {
           content: [{ type: "text", text }],
