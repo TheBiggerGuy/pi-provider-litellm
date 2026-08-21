@@ -30,8 +30,9 @@ export async function listSkills(
   baseUrl: string,
   apiKey: string,
   headers?: Record<string, string>,
+  allowInsecureHttp = false,
 ): Promise<LiteLLMSkill[]> {
-  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl, allowInsecureHttp);
   if (
     skillsCache &&
     skillsCache.baseUrl === normalizedBaseUrl &&
@@ -74,9 +75,10 @@ export async function createSkill(
     inputSchema?: Record<string, unknown>;
   },
   headers?: Record<string, string>,
+  allowInsecureHttp = false,
 ): Promise<unknown> {
   if (!input.source && !input.code) throw new Error("code is required when source is omitted");
-  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl, allowInsecureHttp);
   let usedSkillHub = input.source !== undefined;
   const skillHubPayload = input.source
     ? {
@@ -139,8 +141,9 @@ export async function deleteSkill(
   apiKey: string,
   skillId: string,
   headers?: Record<string, string>,
+  allowInsecureHttp = false,
 ): Promise<void> {
-  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl, allowInsecureHttp);
   let skillHubError: unknown;
   const skillHubResponse = await fetch(`${normalizedBaseUrl}/claude-code/plugins/${encodeURIComponent(skillId)}`, {
     method: "DELETE",
@@ -222,7 +225,7 @@ export function createSkillToolDefinitions(
       parameters: Type.Object({}),
       async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
         const auth = await getAuth(ctx);
-        const skills = await listSkills(auth.baseUrl, auth.apiKey, auth.headers);
+        const skills = await listSkills(auth.baseUrl, auth.apiKey, auth.headers, auth.allowInsecureHttp);
         return { content: [{ type: "text", text: formatSkills(skills) }], details: { count: skills.length } };
       },
     }),
@@ -248,6 +251,7 @@ export function createSkillToolDefinitions(
             inputSchema,
           },
           auth.headers,
+          auth.allowInsecureHttp,
         );
         return { content: [{ type: "text", text: "LiteLLM skill created." }], details: { result } };
       },
@@ -259,7 +263,7 @@ export function createSkillToolDefinitions(
       parameters: DeleteSkillParams,
       async execute(_toolCallId, params: Static<typeof DeleteSkillParams>, _signal, _onUpdate, ctx) {
         const auth = await getAuth(ctx);
-        await deleteSkill(auth.baseUrl, auth.apiKey, params.skillId, auth.headers);
+        await deleteSkill(auth.baseUrl, auth.apiKey, params.skillId, auth.headers, auth.allowInsecureHttp);
         return { content: [{ type: "text", text: `LiteLLM skill deleted: ${params.skillId}` }], details: {} };
       },
     }),

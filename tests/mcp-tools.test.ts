@@ -15,6 +15,16 @@ afterEach(() => {
 });
 
 describe("discoverMcpTools", () => {
+  it("uses an explicitly allowed insecure endpoint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { tools: [] }));
+
+    await expect(
+      discoverMcpTools("http://host.docker.internal", "sk-test", undefined, undefined, undefined, true),
+    ).resolves.toEqual([]);
+
+    expect(fetchMock).toHaveBeenCalledWith("http://host.docker.internal/mcp-rest/tools/list", expect.any(Object));
+  });
+
   it("returns tools from LiteLLM MCP REST discovery", async () => {
     const inputSchema = {
       type: "object",

@@ -61,6 +61,7 @@ type RawProviderSettings = {
   apiKey?: unknown;
   headers?: unknown;
   enabled?: unknown;
+  allowInsecureHttp?: unknown;
 };
 
 type ProviderDefinition = {
@@ -72,6 +73,7 @@ type ProviderDefinition = {
   useDefaultEnv: boolean;
   useGcloudTokenAuth: boolean;
   enableOAuth: boolean;
+  allowInsecureHttp: boolean;
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -390,7 +392,7 @@ async function resolveCredentials(
     apiKeyConfig = `$${ENV_API_KEY}`;
   }
   return {
-    baseUrl: configuredBase ? normalizeBaseUrl(configuredBase) : undefined,
+    baseUrl: configuredBase ? normalizeBaseUrl(configuredBase, definition.allowInsecureHttp) : undefined,
     apiKey: apiKey || undefined,
     apiKeyConfig,
   };
@@ -457,6 +459,7 @@ function getProviderDefinitions(settings: Record<string, unknown> | undefined): 
     useDefaultEnv: isDefault,
     useGcloudTokenAuth: isDefault,
     enableOAuth: isDefault,
+    allowInsecureHttp: raw?.allowInsecureHttp === true,
   });
 
   const definitions = [makeDefinition(PROVIDER_NAME, defaultSettings, true)];
@@ -469,7 +472,7 @@ function getProviderDefinitions(settings: Record<string, unknown> | undefined): 
   return definitions;
 }
 
-async function loginApiKey(interaction: AuthInteraction): Promise<ApiKeyCredential> {
+async function loginApiKey(interaction: AuthInteraction, allowInsecureHttp = false): Promise<ApiKeyCredential> {
   const rawBaseUrl = (
     await interaction.prompt({
       type: "text",
@@ -480,7 +483,7 @@ async function loginApiKey(interaction: AuthInteraction): Promise<ApiKeyCredenti
   if (!rawBaseUrl) throw new Error("Base URL is required");
   const key = (await interaction.prompt({ type: "secret", message: "Enter API key:" })).trim();
   if (!key) throw new Error("Both base URL and API key are required");
-  return { type: "api_key", key, env: { [ENV_BASE_URL]: normalizeBaseUrl(rawBaseUrl) } };
+  return { type: "api_key", key, env: { [ENV_BASE_URL]: normalizeBaseUrl(rawBaseUrl, allowInsecureHttp) } };
 }
 
 type CliSsoStart = { loginId: string; pollSecret: string; userCode: string; expiresInSeconds: number };
@@ -633,7 +636,11 @@ async function loginWithPastedToken(
   return { type: "oauth", access, refresh: "", expires, baseUrl };
 }
 
-async function loginOAuth(interaction: AuthInteraction, headers?: Record<string, string>): Promise<OAuthCredential> {
+async function loginOAuth(
+  interaction: AuthInteraction,
+  headers?: Record<string, string>,
+  allowInsecureHttp = false,
+): Promise<OAuthCredential> {
   const rawBaseUrl = (
     await interaction.prompt({
       type: "text",
@@ -642,7 +649,7 @@ async function loginOAuth(interaction: AuthInteraction, headers?: Record<string,
     })
   ).trim();
   if (!rawBaseUrl) throw new Error("Base URL is required");
-  const baseUrl = normalizeBaseUrl(rawBaseUrl);
+  const baseUrl = normalizeBaseUrl(rawBaseUrl, allowInsecureHttp);
   const cliSso = await startCliSso(baseUrl, interaction.signal, headers);
   if (!cliSso) return loginWithPastedToken(interaction, baseUrl, headers);
   interaction.notify({
@@ -692,7 +699,7 @@ async function resolveApiKeyAuth(
   if (stored) {
     source = "stored credential";
     creds = {
-      baseUrl: baseUrl ? normalizeBaseUrl(baseUrl) : undefined,
+      baseUrl: baseUrl ? normalizeBaseUrl(baseUrl, definition.allowInsecureHttp) : undefined,
       apiKey: stored,
     };
   } else {
@@ -728,7 +735,7 @@ async function resolveApiKeyAuth(
         }
       }
     }
-    if (!creds.baseUrl && baseUrl) creds.baseUrl = normalizeBaseUrl(baseUrl);
+    if (!creds.baseUrl && baseUrl) creds.baseUrl = normalizeBaseUrl(baseUrl, definition.allowInsecureHttp);
   }
   if (!creds.apiKey) return undefined;
   return {
@@ -737,7 +744,7 @@ async function resolveApiKeyAuth(
       baseUrl: creds.baseUrl ? `${creds.baseUrl}/v1` : undefined,
       headers: await resolveHeadersFromContext(definition, ctx.env),
     },
-    env: baseUrl ? { [ENV_BASE_URL]: normalizeBaseUrl(baseUrl) } : undefined,
+    env: baseUrl ? { [ENV_BASE_URL]: normalizeBaseUrl(baseUrl, definition.allowInsecureHttp) } : undefined,
     source: source ?? creds.apiKeyConfig ?? ENV_API_KEY,
   };
 }
@@ -746,7 +753,10 @@ function createProviderAuth(definition: ProviderDefinition): ProviderAuth {
   return {
     apiKey: {
       name: `${definition.displayName} API key`,
-      login: definition.name === PROVIDER_NAME ? loginApiKey : undefined,
+      login:
+        definition.name === PROVIDER_NAME
+          ? (interaction) => loginApiKey(interaction, definition.allowInsecureHttp)
+          : undefined,
       check: async ({ ctx, credential }) => {
         const baseUrl =
           credential?.env?.[ENV_BASE_URL] ??
@@ -784,14 +794,16 @@ function createProviderAuth(definition: ProviderDefinition): ProviderAuth {
       ? {
           name: "LiteLLM SSO",
           loginLabel: "Sign in with LiteLLM SSO",
-          login: (interaction) => loginOAuth(interaction, resolveHeaders(definition)),
+          login: (interaction) => loginOAuth(interaction, resolveHeaders(definition), definition.allowInsecureHttp),
           refresh: async (credential, signal) => ({
             ...(await refreshLiteLLM(credential, signal)),
             type: "oauth" as const,
           }),
           toAuth: async (credential) => ({
             apiKey: credential.access,
-            baseUrl: credential.baseUrl ? `${normalizeBaseUrl(String(credential.baseUrl))}/v1` : undefined,
+            baseUrl: credential.baseUrl
+              ? `${normalizeBaseUrl(String(credential.baseUrl), definition.allowInsecureHttp)}/v1`
+              : undefined,
             headers: resolveHeaders(definition),
           }),
         }
@@ -1037,16 +1049,21 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       cleanConfig(definition.baseUrl) ??
       (definition.useDefaultEnv ? cleanConfig(process.env[ENV_BASE_URL]) : undefined) ??
       "https://litellm.example.com";
-    return `${normalizeBaseUrl(baseUrl)}/v1`;
+    return `${normalizeBaseUrl(baseUrl, definition.allowInsecureHttp)}/v1`;
   }
 
   async function authForCredential(definition: ProviderDefinition, credential?: Credential, executeHelpers = true) {
     if (credential?.type === "oauth") {
       const baseUrl =
         typeof credential.baseUrl === "string"
-          ? normalizeBaseUrl(credential.baseUrl)
-          : normalizeBaseUrl(requestBaseUrl(definition));
-      return { baseUrl, apiKey: credential.access, headers: resolveHeaders(definition) };
+          ? normalizeBaseUrl(credential.baseUrl, definition.allowInsecureHttp)
+          : normalizeBaseUrl(requestBaseUrl(definition), definition.allowInsecureHttp);
+      return {
+        baseUrl,
+        apiKey: credential.access,
+        headers: resolveHeaders(definition),
+        allowInsecureHttp: definition.allowInsecureHttp,
+      };
     }
     const resolved = await resolveApiKeyAuth(
       definition,
@@ -1058,9 +1075,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       throw new Error(`no credentials for ${definition.name}. Run /login litellm or set env vars.`);
     }
     return {
-      baseUrl: normalizeBaseUrl(resolved.auth.baseUrl ?? requestBaseUrl(definition)),
+      baseUrl: normalizeBaseUrl(resolved.auth.baseUrl ?? requestBaseUrl(definition), definition.allowInsecureHttp),
       apiKey: resolved.auth.apiKey,
       headers: resolved.auth.headers,
+      allowInsecureHttp: definition.allowInsecureHttp,
     };
   }
 
@@ -1070,7 +1088,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
   function mcpCatalogIdentity(auth: LiteLLMRuntimeAuth): string {
     return JSON.stringify({
-      baseUrl: normalizeBaseUrl(auth.baseUrl),
+      baseUrl: normalizeBaseUrl(auth.baseUrl, auth.allowInsecureHttp),
       apiKey: auth.apiKey,
       headers: Object.entries(auth.headers ?? {}).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
     });
@@ -1089,9 +1107,10 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       ),
     );
     return {
-      baseUrl: normalizeBaseUrl(baseUrl),
+      baseUrl: normalizeBaseUrl(baseUrl, definitions[0]?.allowInsecureHttp),
       apiKey,
       headers: Object.keys(headers).length > 0 ? headers : undefined,
+      allowInsecureHttp: definitions[0]?.allowInsecureHttp,
     };
   }
 
@@ -1164,11 +1183,12 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       timeoutMs: getDiscoveryTimeoutMs(),
       signal,
       headers: auth.headers,
+      allowInsecureHttp: auth.allowInsecureHttp,
       silent: !isVerboseDiscovery(),
       onProgress: isVerboseDiscovery() ? (message) => process.stderr.write(`LiteLLM: ${message}\n`) : undefined,
     });
     signal?.throwIfAborted();
-    return { ...result, baseUrl: `${normalizeBaseUrl(auth.baseUrl)}/v1` };
+    return { ...result, baseUrl: `${normalizeBaseUrl(auth.baseUrl, auth.allowInsecureHttp)}/v1` };
   }
 
   // Pi's startup path only ever refreshes with allowNetwork:false, and it returns before the
@@ -1264,7 +1284,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       const auth = await getRuntimeAuth(ctx);
       if (!auth) return;
       defaultRuntimeAuth = auth;
-      const skills = await listSkills(auth.baseUrl, auth.apiKey, auth.headers);
+      const skills = await listSkills(auth.baseUrl, auth.apiKey, auth.headers, auth.allowInsecureHttp);
       section = createSkillsPromptSection(skills);
     } catch (error) {
       if (isVerboseDiscovery()) {
