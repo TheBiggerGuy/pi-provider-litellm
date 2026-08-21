@@ -238,6 +238,7 @@ Opening `/model` refreshes configured provider catalogs in the background using 
 | Symptom | Likely cause |
 |---|---|
 | "no credentials" warning at startup | Env vars not set and no OAuth credential — run `/login litellm` |
+| `No models available` at startup, gone after a restart | A Pi startup race, not discovery — see [`No models available` at startup](#no-models-available-at-startup) |
 | "discovered no models" | Proxy returned an empty list — check pi's startup log and verify `/model/info`, `/v1/models`, or `/health` responds |
 | `/model/info` returning 401/403/404 | Expected behavior with virtual keys — extension falls back to `/v1/models` |
 | Discovery times out | Increase `LITELLM_DISCOVERY_TIMEOUT_MS` or set `LITELLM_OFFLINE=1` to fall back on cached models |
@@ -249,6 +250,27 @@ Opening `/model` refreshes configured provider catalogs in the background using 
 | Enterprise SSO token prompt fails with "SSO token is required" | The token field was left empty — paste the token copied from the LiteLLM UI |
 | MCP tools not showing | Verify the proxy exposes `/mcp-rest/tools/list` and open `/model` after fixing the proxy |
 | Skills not affecting prompts | Verify the proxy exposes `/claude-code/marketplace.json` or `/v1/skills` and returns enabled skills |
+
+### `No models available` at startup
+
+Pi 0.84.0 and later can finish startup before the provider availability snapshot is written, so the
+initial model pick sees nothing even though discovery succeeded. The warning is intermittent and a
+restart usually clears it. Nothing is wrong with the catalog: `/model` in the same session still
+lists every discovered model, and picking one there fixes that session.
+
+Scoping models keeps selection off that path, because Pi resolves the scope with its own awaited
+availability pass before it picks a model. In `~/.pi/agent/settings.json`:
+
+```json
+{
+  "enabledModels": ["litellm/*"]
+}
+```
+
+Your `defaultProvider` and `defaultModel` still win as long as they match a pattern. `/model` then
+opens on the scoped list, with a toggle inside the picker for the full catalog.
+
+The extension cannot set this for you — Pi reads `enabledModels` before extensions activate.
 
 ## License
 
