@@ -46,7 +46,7 @@
     "typecheck": "tsgo --noEmit",
     "lint": "biome check --error-on-warnings .",
     "format": "biome check --write .",
-    "test": "vitest --run",
+    "test": "vitest --run --dir tests",
     "supply-chain:guard": "tsx scripts/supply-chain-guard.ts",
     "check": "npm run lint && npm run typecheck && npm test",
     "prepublishOnly": "npm run check && npm run clean && npm run build && npm run supply-chain:guard"

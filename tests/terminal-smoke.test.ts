@@ -9,6 +9,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const piPath = resolve(repoRoot, "node_modules/.bin/pi");
 const extensionPath = resolve(repoRoot, "dist/index.js");
 const enabled = process.env.LITELLM_TERMINAL_SMOKE === "1";
+const smokeBaseUrl = process.env.LITELLM_BASE_URL ?? "http://127.0.0.1:4000";
 const waitTimeoutMs = 90_000;
 const testTimeoutMs = 6 * waitTimeoutMs;
 let terminal: TerminalControl | undefined;
@@ -17,7 +18,8 @@ async function withPi(run: (session: Session) => Promise<void>): Promise<void> {
   const configuredAgentDir = process.env.PI_CODING_AGENT_DIR?.trim();
   const agentDir = configuredAgentDir || (await mkdtemp(join(tmpdir(), "pi-litellm-terminal-")));
   try {
-    const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
+    // Pinned so login always reaches the "reuse the known URL" branch, whatever the shell exports.
+    const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir, LITELLM_BASE_URL: smokeBaseUrl };
     await using session = await terminal?.launch({
       command: [piPath, "-e", extensionPath, "--no-tools", "--no-session"],
       cwd: repoRoot,
@@ -122,8 +124,10 @@ describe.skipIf(!enabled)("interactive Pi terminal smoke", () => {
         await session.screen.waitForIdle({ timeoutMs: waitTimeoutMs });
         await submit(session, "/login litellm", "LiteLLM · subscription/API key");
         await selectApiKeyAuthMethod(session);
-        await session.screen.waitForText("Enter LiteLLM proxy URL", { timeoutMs: waitTimeoutMs });
-        await submit(session, process.env.LITELLM_BASE_URL ?? "http://127.0.0.1:4000");
+        // The proxy URL is offered from LITELLM_BASE_URL, so signing in costs one keypress (#147).
+        await session.screen.waitForText("LiteLLM proxy URL", { timeoutMs: waitTimeoutMs });
+        await session.screen.waitForText(`${smokeBaseUrl} ($LITELLM_BASE_URL)`, { timeoutMs: waitTimeoutMs });
+        await session.keyboard.press("Enter");
         await session.screen.waitForText("Enter API key", { timeoutMs: waitTimeoutMs });
         await submit(session, process.env.LITELLM_API_KEY ?? "sk-ci-litellm-smoke");
 
