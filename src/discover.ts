@@ -76,19 +76,8 @@ function aggregateRouteDialects(dialects: ReadonlySet<RouteDialect | undefined>)
   return dialects.size === 1 ? dialect : "other";
 }
 
-const routeDialects = new Map<string, RouteDialect>();
-
-export function recordRouteDialect(modelId: string, dialect: RouteDialect | undefined): void {
-  if (dialect) routeDialects.set(modelId, dialect);
-  else routeDialects.delete(modelId);
-}
-
-export function getRouteDialect(modelId: string): RouteDialect | undefined {
-  return routeDialects.get(modelId);
-}
-
-export function shouldSuppressReasoningContent(modelId: string): boolean {
-  return getRouteDialect(modelId) === "moonshot" && !FORCED_THINKING_MODEL_PATTERN.test(modelId);
+export function shouldSuppressReasoningContent(modelId: string, dialect: RouteDialect | undefined): boolean {
+  return dialect === "moonshot" && !FORCED_THINKING_MODEL_PATTERN.test(modelId);
 }
 
 export function emitsThinkTags(modelId: string): boolean {
@@ -248,16 +237,12 @@ function mapReasoningEfforts(
   return Object.keys(map).length > 0 ? map : undefined;
 }
 
-function mapFromModelInfo(
-  entry: ModelInfoEntry,
-  dialect = routeDialectFromEntry(entry),
-): DiscoveredModel | undefined {
+function mapFromModelInfo(entry: ModelInfoEntry, dialect = routeDialectFromEntry(entry)): DiscoveredModel | undefined {
   const id = entry.model_name;
   if (!id) return undefined;
   const info = entry.model_info ?? {};
   if (!isChatStyleMode(info.mode)) return undefined;
   const responsesMode = isResponsesMode(info.mode);
-  recordRouteDialect(id, dialect);
   const catalogModel = findCatalogModel(id);
   const reasoningEffortMap = mapReasoningEfforts(info);
   const thinkingLevelMap =

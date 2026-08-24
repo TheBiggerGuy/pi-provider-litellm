@@ -4,7 +4,6 @@ import {
   discoverModels,
   emitsThinkTags,
   normalizeBaseUrl,
-  recordRouteDialect,
   shouldSuppressReasoningContent,
 } from "../src/discover.js";
 
@@ -121,35 +120,25 @@ describe("buildCompat", () => {
 });
 
 describe("shouldSuppressReasoningContent", () => {
-  afterEach(() => {
-    for (const id of ["kimi-k2.6", "moonshotai/kimi-k2", "kimi-k2-thinking", "kimi-k3", "openai/gpt-4o"]) {
-      recordRouteDialect(id, undefined);
-    }
-  });
-
   it("suppresses separate reasoning streams for Moonshot-native routes", () => {
-    recordRouteDialect("kimi-k2.6", "moonshot");
-    recordRouteDialect("moonshotai/kimi-k2", "moonshot");
-    expect(shouldSuppressReasoningContent("kimi-k2.6")).toBe(true);
-    expect(shouldSuppressReasoningContent("moonshotai/kimi-k2")).toBe(true);
+    expect(shouldSuppressReasoningContent("kimi-k2.6", "moonshot")).toBe(true);
+    expect(shouldSuppressReasoningContent("moonshotai/kimi-k2", "moonshot")).toBe(true);
   });
 
   it("does not suppress explicit forced-thinking models", () => {
-    recordRouteDialect("kimi-k2-thinking", "moonshot");
-    expect(shouldSuppressReasoningContent("kimi-k2-thinking")).toBe(false);
+    expect(shouldSuppressReasoningContent("kimi-k2-thinking", "moonshot")).toBe(false);
   });
 
   it("does not suppress unrelated models", () => {
-    expect(shouldSuppressReasoningContent("openai/gpt-4o")).toBe(false);
+    expect(shouldSuppressReasoningContent("openai/gpt-4o", undefined)).toBe(false);
   });
 
   it("does not suppress Kimi aliases routed to a non-Moonshot upstream", () => {
-    recordRouteDialect("kimi-k3", "other");
-    expect(shouldSuppressReasoningContent("kimi-k3")).toBe(false);
+    expect(shouldSuppressReasoningContent("kimi-k3", "other")).toBe(false);
   });
 
   it("does not suppress when the route is unknown", () => {
-    expect(shouldSuppressReasoningContent("kimi-k3")).toBe(false);
+    expect(shouldSuppressReasoningContent("kimi-k3", undefined)).toBe(false);
   });
 
   it("still parses think tags for unknown routes that look like Kimi", () => {
@@ -402,7 +391,58 @@ describe("discoverModels via /model/info", () => {
     const result = await discoverModels("https://litellm.example.com", "sk-test", {});
 
     expect(result.models[0]?.routeDialect).toBe(dialect);
-    expect(shouldSuppressReasoningContent("kimi-prod")).toBe(suppress);
+    expect(shouldSuppressReasoningContent("kimi-prod", result.models[0]?.routeDialect)).toBe(suppress);
+  });
+
+  it("keeps route evidence isolated between discoveries", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const model = url.startsWith("https://moonshot.example.com") ? "moonshot/kimi-k3" : "azure_ai/FW-Kimi-K3";
+      return jsonResponse(200, {
+        data: [
+          {
+            model_name: "kimi-prod",
+            litellm_params: { model },
+            model_info: { mode: "chat" },
+          },
+        ],
+      });
+    });
+
+    const moonshot = await discoverModels("https://moonshot.example.com", "sk-test", {});
+    const azure = await discoverModels("https://azure.example.com", "sk-test", {});
+
+    expect(shouldSuppressReasoningContent("kimi-prod", moonshot.models[0]?.routeDialect)).toBe(true);
+    expect(shouldSuppressReasoningContent("kimi-prod", azure.models[0]?.routeDialect)).toBe(false);
+  });
+
+  it("does not reuse route evidence after metadata fallback", async () => {
+    let fallback = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return fallback
+          ? jsonResponse(403, {})
+          : jsonResponse(200, {
+              data: [
+                {
+                  model_name: "kimi-prod",
+                  litellm_params: { model: "moonshot/kimi-k3" },
+                  model_info: { mode: "chat" },
+                },
+              ],
+            });
+      }
+      if (url.endsWith("/v1/models")) return jsonResponse(200, { data: [{ id: "kimi-prod" }] });
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    await discoverModels("https://litellm.example.com", "sk-test", {});
+    fallback = true;
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.routeDialect).toBeUndefined();
+    expect(shouldSuppressReasoningContent("kimi-prod", result.models[0]?.routeDialect)).toBe(false);
   });
 });
 

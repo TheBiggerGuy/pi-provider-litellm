@@ -516,6 +516,32 @@ describe("extension startup", () => {
     expect(result).toMatchObject({
       messages: [{ role: "tool", tool_call_id: "call_1", content: "tool output" }],
     });
+
+    const moonshotRoute = await pi.handlers.get("before_provider_request")?.[0]?.(
+      { payload: { messages: [] } },
+      {
+        model: {
+          provider: "litellm-anthropic",
+          id: "k3-prod",
+          api: "openai-completions",
+          routeDialect: "moonshot",
+        },
+      },
+    );
+    const otherRoute = await pi.handlers.get("before_provider_request")?.[0]?.(
+      { payload: { messages: [] } },
+      {
+        model: { provider: "litellm", id: "k3-prod", api: "openai-completions", routeDialect: "other" },
+      },
+    );
+
+    expect(moonshotRoute).toEqual({
+      messages: [],
+      include_reasoning: false,
+      reasoning_content: false,
+      merge_reasoning_content_in_choices: true,
+    });
+    expect(otherRoute).toBeUndefined();
   });
 
   it("returns a native API-key credential without discovery side effects", async () => {

@@ -17,6 +17,8 @@ export type DiscoveredModel = Omit<Model<"openai-completions">, "provider" | "ap
   routeDialect?: RouteDialect;
 };
 
+export type LiteLLMModel = Model<LiteLLMApi> & { routeDialect?: RouteDialect };
+
 export interface DiscoveryResult {
   models: DiscoveredModel[];
   source: DiscoverySource;

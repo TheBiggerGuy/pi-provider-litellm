@@ -659,7 +659,10 @@ describe("feature parity", () => {
     }
 
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
-    const updated = beforeRequest?.({ payload: { messages: [] } }, { model: { provider: "litellm", id: "kimi-k2.6" } });
+    const updated = beforeRequest?.(
+      { payload: { messages: [] } },
+      { model: { provider: "litellm", id: "kimi-k2.6", routeDialect: "moonshot" } },
+    );
     expect(updated).toMatchObject({
       messages: [],
       include_reasoning: false,
@@ -697,7 +700,7 @@ describe("feature parity", () => {
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
     const updated = beforeRequest?.(
       { payload: { messages: [] } },
-      { model: { provider: "litellm", id: "kimi-k3", api: "openai-completions" } },
+      { model: { provider: "litellm", id: "kimi-k3", api: "openai-completions", routeDialect: "moonshot" } },
     );
     expect(updated).toEqual({
       messages: [],
@@ -774,7 +777,7 @@ describe("feature parity", () => {
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
     const updated = beforeRequest?.(
       { payload: { messages: [] } },
-      { model: { provider: "litellm", id: "k3-prod", api: "openai-completions" } },
+      { model: { provider: "litellm", id: "k3-prod", api: "openai-completions", routeDialect: "moonshot" } },
     );
     expect(updated).toEqual({
       messages: [],
@@ -840,7 +843,7 @@ describe("feature parity", () => {
           ],
         },
       },
-      { model: { provider: "litellm", id: "kimi-k3" } },
+      { model: { provider: "litellm", id: "kimi-k3", routeDialect: "moonshot" } },
     );
 
     expect(updated).toEqual({
@@ -899,7 +902,7 @@ describe("feature parity", () => {
           ],
         },
       },
-      { model: { provider: "litellm", id: "kimi-k3" } },
+      { model: { provider: "litellm", id: "kimi-k3", routeDialect: "moonshot" } },
     );
 
     expect(updated).toEqual({
@@ -951,7 +954,10 @@ describe("feature parity", () => {
       { role: "tool", tool_call_id: "call_1", content: "tool output" },
     ];
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
-    const updated = beforeRequest?.({ payload: { messages } }, { model: { provider: "litellm", id: "kimi-k3" } });
+    const updated = beforeRequest?.(
+      { payload: { messages } },
+      { model: { provider: "litellm", id: "kimi-k3", routeDialect: "moonshot" } },
+    );
 
     expect(updated?.messages).toBe(messages);
   });
