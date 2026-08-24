@@ -83,23 +83,16 @@ export function getRouteDialect(modelId: string): RouteDialect | undefined {
   return routeDialects.get(modelId);
 }
 
-export function isMoonshotRoute(modelId: string): boolean {
-  const dialect = getRouteDialect(modelId);
-  if (dialect) return dialect === "moonshot";
-  return isMoonshotModel(modelId);
-}
-
 export function shouldSuppressReasoningContent(modelId: string): boolean {
   return getRouteDialect(modelId) === "moonshot" && !FORCED_THINKING_MODEL_PATTERN.test(modelId);
 }
 
 export function emitsThinkTags(modelId: string): boolean {
-  return isMoonshotRoute(modelId) && !FORCED_THINKING_MODEL_PATTERN.test(modelId);
+  return isMoonshotModel(modelId) && !FORCED_THINKING_MODEL_PATTERN.test(modelId);
 }
 
-export function buildCompat(modelId: string, dialect?: RouteDialect): DiscoveredModel["compat"] {
-  const moonshotRoute = dialect ? dialect === "moonshot" : isMoonshotModel(modelId);
-  if (moonshotRoute) {
+export function buildCompat(modelId: string): DiscoveredModel["compat"] {
+  if (isMoonshotModel(modelId)) {
     return {
       supportsStore: false,
       supportsDeveloperRole: false,
@@ -274,7 +267,7 @@ function mapFromModelInfo(entry: ModelInfoEntry): DiscoveredModel | undefined {
     cost: mapModelInfoCost(info, catalogModel?.cost),
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
     maxTokens: info.max_output_tokens ?? DEFAULT_MAX_TOKENS,
-    compat: buildCompat(id, dialect),
+    compat: buildCompat(id),
     ...(responsesMode ? { api: "openai-responses" as const } : {}),
   };
 }

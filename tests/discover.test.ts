@@ -364,6 +364,24 @@ describe("discoverModels via /model/info", () => {
       cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 },
     });
   });
+
+  it("keeps Kimi compatibility on non-Moonshot routes", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: [
+          {
+            model_name: "kimi-k3",
+            litellm_params: { model: "azure_ai/FW-Kimi-K3" },
+            model_info: { mode: "chat" },
+          },
+        ],
+      }),
+    );
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.compat).toEqual(buildCompat("kimi-k3"));
+  });
 });
 
 describe("discoverModels wildcard expansion via /v1/models", () => {

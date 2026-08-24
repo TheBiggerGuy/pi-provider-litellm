@@ -734,10 +734,16 @@ describe("feature parity", () => {
 
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
     const updated = beforeRequest?.(
-      { payload: { messages: [] } },
+      {
+        payload: {
+          messages: [{ role: "tool", tool_call_id: "call_1", content: [{ type: "text", text: "tool output" }] }],
+        },
+      },
       { model: { provider: "litellm", id: "kimi-k3", api: "openai-completions" } },
     );
-    expect(updated).toBeUndefined();
+    expect(updated).toEqual({
+      messages: [{ role: "tool", tool_call_id: "call_1", content: "tool output" }],
+    });
   });
 
   it("still suppresses reasoning on Moonshot-native routes", async () => {
@@ -1195,6 +1201,7 @@ describe("feature parity", () => {
           data: [
             {
               model_name: "kimi-k2.6",
+              litellm_params: { model: "azure_ai/FW-Kimi-K2.6" },
               model_info: { mode: "chat" },
             },
           ],

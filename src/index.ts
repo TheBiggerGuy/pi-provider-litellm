@@ -20,7 +20,7 @@ import {
   discoverModels,
   emitsThinkTags,
   isGpt55Model,
-  isMoonshotRoute,
+  isMoonshotModel,
   normalizeBaseUrl,
   shouldSuppressReasoningContent,
 } from "./discover.js";
@@ -959,7 +959,7 @@ function prepareLiteLLMRequestPayload(
 
   // Moonshot/Kimi applies strict OpenAI schema validation: assistant tool calls
   // must carry string content, and tool results must be plain text.
-  if (modelId && isMoonshotRoute(modelId)) {
+  if (modelId && isMoonshotModel(modelId)) {
     const messages = (next ?? payload).messages;
     if (Array.isArray(messages)) {
       const normalized = normalizeStrictToolMessages(messages);
