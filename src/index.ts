@@ -18,8 +18,9 @@ import { getAgentDir, readStoredCredential } from "@earendil-works/pi-coding-age
 import { setupLiteLLMCostTracking } from "./cost.js";
 import {
   discoverModels,
+  emitsThinkTags,
   isGpt55Model,
-  isMoonshotModel,
+  isMoonshotRoute,
   normalizeBaseUrl,
   shouldSuppressReasoningContent,
 } from "./discover.js";
@@ -958,7 +959,7 @@ function prepareLiteLLMRequestPayload(
 
   // Moonshot/Kimi applies strict OpenAI schema validation: assistant tool calls
   // must carry string content, and tool results must be plain text.
-  if (modelId && isMoonshotModel(modelId)) {
+  if (modelId && isMoonshotRoute(modelId)) {
     const messages = (next ?? payload).messages;
     if (Array.isArray(messages)) {
       const normalized = normalizeStrictToolMessages(messages);
@@ -1004,7 +1005,7 @@ function normalizeThinkTags(
   message: AssistantMessage,
   litellmProviderNames: Set<string>,
 ): AssistantMessage | undefined {
-  if (!litellmProviderNames.has(message.provider) || !shouldSuppressReasoningContent(message.model)) return;
+  if (!litellmProviderNames.has(message.provider) || !emitsThinkTags(message.model)) return;
 
   let changed = false;
   const content: AssistantMessage["content"] = [];

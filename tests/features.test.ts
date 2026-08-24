@@ -622,6 +622,11 @@ describe("feature parity", () => {
         return jsonResponse(200, {
           data: [
             {
+              model_name: "kimi-k2.6",
+              litellm_params: { model: "moonshot/kimi-k2.6" },
+              model_info: { mode: "chat" },
+            },
+            {
               model_name: "anthropic/claude-3-5-sonnet",
               model_info: {
                 mode: "chat",
@@ -676,6 +681,7 @@ describe("feature parity", () => {
           data: [
             {
               model_name: "kimi-k3",
+              litellm_params: { model: "moonshot/kimi-k3" },
               model_info: { mode: "chat" },
             },
           ],
@@ -692,6 +698,77 @@ describe("feature parity", () => {
     const updated = beforeRequest?.(
       { payload: { messages: [] } },
       { model: { provider: "litellm", id: "kimi-k3", api: "openai-completions" } },
+    );
+    expect(updated).toEqual({
+      messages: [],
+      include_reasoning: false,
+      reasoning_content: false,
+      merge_reasoning_content_in_choices: true,
+    });
+  });
+
+  it("keeps Moonshot suppression off routes that only look like Kimi", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "kimi-k3",
+              litellm_params: { model: "azure_ai/FW-Kimi-K3" },
+              model_info: { mode: "chat" },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.(
+      { payload: { messages: [] } },
+      { model: { provider: "litellm", id: "kimi-k3", api: "openai-completions" } },
+    );
+    expect(updated).toBeUndefined();
+  });
+
+  it("still suppresses reasoning on Moonshot-native routes", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
+    process.env.LITELLM_BASE_URL = "https://litellm.example.com";
+    process.env.LITELLM_API_KEY = "sk-test";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return jsonResponse(200, {
+          data: [
+            {
+              model_name: "k3-prod",
+              litellm_params: { model: "moonshot/kimi-k3" },
+              model_info: { mode: "chat" },
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    const extension = await loadExtension(agentDir);
+    const pi = createPi();
+    await extension(pi);
+
+    const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const updated = beforeRequest?.(
+      { payload: { messages: [] } },
+      { model: { provider: "litellm", id: "k3-prod", api: "openai-completions" } },
     );
     expect(updated).toEqual({
       messages: [],
@@ -726,7 +803,17 @@ describe("feature parity", () => {
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
     process.env.LITELLM_API_KEY = "sk-test";
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { data: [] }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: [
+          {
+            model_name: "kimi-k3",
+            litellm_params: { model: "moonshot/kimi-k3" },
+            model_info: { mode: "chat" },
+          },
+        ],
+      }),
+    );
 
     const extension = await loadExtension(agentDir);
     const pi = createPi();
@@ -771,7 +858,17 @@ describe("feature parity", () => {
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
     process.env.LITELLM_API_KEY = "sk-test";
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { data: [] }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: [
+          {
+            model_name: "kimi-k3",
+            litellm_params: { model: "moonshot/kimi-k3" },
+            model_info: { mode: "chat" },
+          },
+        ],
+      }),
+    );
 
     const extension = await loadExtension(agentDir);
     const pi = createPi();
@@ -823,7 +920,17 @@ describe("feature parity", () => {
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
     process.env.LITELLM_API_KEY = "sk-test";
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, { data: [] }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: [
+          {
+            model_name: "kimi-k3",
+            litellm_params: { model: "moonshot/kimi-k3" },
+            model_info: { mode: "chat" },
+          },
+        ],
+      }),
+    );
 
     const extension = await loadExtension(agentDir);
     const pi = createPi();

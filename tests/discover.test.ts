@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildCompat, discoverModels, normalizeBaseUrl, shouldSuppressReasoningContent } from "../src/discover.js";
+import {
+  buildCompat,
+  discoverModels,
+  emitsThinkTags,
+  normalizeBaseUrl,
+  recordRouteDialect,
+  shouldSuppressReasoningContent,
+} from "../src/discover.js";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -114,17 +121,40 @@ describe("buildCompat", () => {
 });
 
 describe("shouldSuppressReasoningContent", () => {
-  it("suppresses separate reasoning streams for Kimi/Moonshot aliases", () => {
+  afterEach(() => {
+    for (const id of ["kimi-k2.6", "moonshotai/kimi-k2", "kimi-k2-thinking", "kimi-k3", "openai/gpt-4o"]) {
+      recordRouteDialect(id, undefined);
+    }
+  });
+
+  it("suppresses separate reasoning streams for Moonshot-native routes", () => {
+    recordRouteDialect("kimi-k2.6", "moonshot");
+    recordRouteDialect("moonshotai/kimi-k2", "moonshot");
     expect(shouldSuppressReasoningContent("kimi-k2.6")).toBe(true);
     expect(shouldSuppressReasoningContent("moonshotai/kimi-k2")).toBe(true);
   });
 
   it("does not suppress explicit forced-thinking models", () => {
+    recordRouteDialect("kimi-k2-thinking", "moonshot");
     expect(shouldSuppressReasoningContent("kimi-k2-thinking")).toBe(false);
   });
 
   it("does not suppress unrelated models", () => {
     expect(shouldSuppressReasoningContent("openai/gpt-4o")).toBe(false);
+  });
+
+  it("does not suppress Kimi aliases routed to a non-Moonshot upstream", () => {
+    recordRouteDialect("kimi-k3", "other");
+    expect(shouldSuppressReasoningContent("kimi-k3")).toBe(false);
+  });
+
+  it("does not suppress when the route is unknown", () => {
+    expect(shouldSuppressReasoningContent("kimi-k3")).toBe(false);
+  });
+
+  it("still parses think tags for unknown routes that look like Kimi", () => {
+    expect(emitsThinkTags("kimi-k3")).toBe(true);
+    expect(emitsThinkTags("openai/gpt-4o")).toBe(false);
   });
 });
 

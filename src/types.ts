@@ -29,6 +29,10 @@ export interface DiscoveryOptions {
 
 export interface ModelInfoEntry {
   model_name?: string;
+  litellm_params?: {
+    model?: string;
+    custom_llm_provider?: string;
+  };
   model_info?: {
     mode?: string | null;
     input_cost_per_token?: number;

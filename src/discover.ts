@@ -60,12 +60,46 @@ export function isGpt55Model(modelId: string): boolean {
   return GPT55_MODEL_PATTERN.test(modelId);
 }
 
-export function shouldSuppressReasoningContent(modelId: string): boolean {
-  return isMoonshotModel(modelId) && !FORCED_THINKING_MODEL_PATTERN.test(modelId);
+export type RouteDialect = "moonshot" | "other";
+
+const MOONSHOT_ROUTE_PROVIDERS = new Set(["moonshot", "moonshotai"]);
+
+export function routeDialectFromEntry(entry: ModelInfoEntry): RouteDialect | undefined {
+  const params = entry.litellm_params;
+  if (!params) return undefined;
+  const provider = params.custom_llm_provider ?? params.model?.split("/")[0];
+  if (!provider) return undefined;
+  return MOONSHOT_ROUTE_PROVIDERS.has(provider.toLowerCase()) ? "moonshot" : "other";
 }
 
-export function buildCompat(modelId: string): DiscoveredModel["compat"] {
-  if (isMoonshotModel(modelId)) {
+const routeDialects = new Map<string, RouteDialect>();
+
+export function recordRouteDialect(modelId: string, dialect: RouteDialect | undefined): void {
+  if (dialect) routeDialects.set(modelId, dialect);
+  else routeDialects.delete(modelId);
+}
+
+export function getRouteDialect(modelId: string): RouteDialect | undefined {
+  return routeDialects.get(modelId);
+}
+
+export function isMoonshotRoute(modelId: string): boolean {
+  const dialect = getRouteDialect(modelId);
+  if (dialect) return dialect === "moonshot";
+  return isMoonshotModel(modelId);
+}
+
+export function shouldSuppressReasoningContent(modelId: string): boolean {
+  return getRouteDialect(modelId) === "moonshot" && !FORCED_THINKING_MODEL_PATTERN.test(modelId);
+}
+
+export function emitsThinkTags(modelId: string): boolean {
+  return isMoonshotRoute(modelId) && !FORCED_THINKING_MODEL_PATTERN.test(modelId);
+}
+
+export function buildCompat(modelId: string, dialect?: RouteDialect): DiscoveredModel["compat"] {
+  const moonshotRoute = dialect ? dialect === "moonshot" : isMoonshotModel(modelId);
+  if (moonshotRoute) {
     return {
       supportsStore: false,
       supportsDeveloperRole: false,
@@ -223,6 +257,8 @@ function mapFromModelInfo(entry: ModelInfoEntry): DiscoveredModel | undefined {
   const info = entry.model_info ?? {};
   if (!isChatStyleMode(info.mode)) return undefined;
   const responsesMode = isResponsesMode(info.mode);
+  const dialect = routeDialectFromEntry(entry);
+  recordRouteDialect(id, dialect);
   const catalogModel = findCatalogModel(id);
   const reasoningEffortMap = mapReasoningEfforts(info);
   const thinkingLevelMap =
@@ -238,7 +274,7 @@ function mapFromModelInfo(entry: ModelInfoEntry): DiscoveredModel | undefined {
     cost: mapModelInfoCost(info, catalogModel?.cost),
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
     maxTokens: info.max_output_tokens ?? DEFAULT_MAX_TOKENS,
-    compat: buildCompat(id),
+    compat: buildCompat(id, dialect),
     ...(responsesMode ? { api: "openai-responses" as const } : {}),
   };
 }
