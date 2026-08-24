@@ -382,6 +382,28 @@ describe("discoverModels via /model/info", () => {
 
     expect(result.models[0]?.compat).toEqual(buildCompat("kimi-k3"));
   });
+
+  it.each([
+    ["Moonshot deployments", ["moonshot/kimi-k3", "moonshot/kimi-k3"], "moonshot", true],
+    ["mixed deployments", ["moonshot/kimi-k3", "azure_ai/FW-Kimi-K3"], "other", false],
+    ["reversed mixed deployments", ["azure_ai/FW-Kimi-K3", "moonshot/kimi-k3"], "other", false],
+    ["incomplete deployment metadata", ["moonshot/kimi-k3", undefined], "other", false],
+  ] as const)("aggregates %s conservatively", async (_name, routes, dialect, suppress) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: routes.map((model) => ({
+          model_name: "kimi-prod",
+          ...(model ? { litellm_params: { model } } : {}),
+          model_info: { mode: "chat" },
+        })),
+      }),
+    );
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.routeDialect).toBe(dialect);
+    expect(shouldSuppressReasoningContent("kimi-prod")).toBe(suppress);
+  });
 });
 
 describe("discoverModels wildcard expansion via /v1/models", () => {

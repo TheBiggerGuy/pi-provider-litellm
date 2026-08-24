@@ -3,6 +3,7 @@ import type { Model } from "@earendil-works/pi-ai";
 export type DiscoverySource = "model_info" | "models_list" | "health";
 
 export type LiteLLMApi = "openai-completions" | "openai-responses";
+export type RouteDialect = "moonshot" | "other";
 
 export type LiteLLMRuntimeAuth = {
   baseUrl: string;
@@ -13,6 +14,7 @@ export type LiteLLMRuntimeAuth = {
 
 export type DiscoveredModel = Omit<Model<"openai-completions">, "provider" | "api" | "baseUrl"> & {
   api?: LiteLLMApi;
+  routeDialect?: RouteDialect;
 };
 
 export interface DiscoveryResult {

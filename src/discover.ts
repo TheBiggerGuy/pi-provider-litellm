@@ -11,6 +11,7 @@ import type {
   ModelInfoResponse,
   ModelsListEntry,
   ModelsListResponse,
+  RouteDialect,
 } from "./types.js";
 
 const DEFAULT_TIMEOUT_MS = 5000;
@@ -60,8 +61,6 @@ export function isGpt55Model(modelId: string): boolean {
   return GPT55_MODEL_PATTERN.test(modelId);
 }
 
-export type RouteDialect = "moonshot" | "other";
-
 const MOONSHOT_ROUTE_PROVIDERS = new Set(["moonshot", "moonshotai"]);
 
 export function routeDialectFromEntry(entry: ModelInfoEntry): RouteDialect | undefined {
@@ -70,6 +69,11 @@ export function routeDialectFromEntry(entry: ModelInfoEntry): RouteDialect | und
   const provider = params.custom_llm_provider ?? params.model?.split("/")[0];
   if (!provider) return undefined;
   return MOONSHOT_ROUTE_PROVIDERS.has(provider.toLowerCase()) ? "moonshot" : "other";
+}
+
+function aggregateRouteDialects(dialects: ReadonlySet<RouteDialect | undefined>): RouteDialect | undefined {
+  const [dialect] = dialects;
+  return dialects.size === 1 ? dialect : "other";
 }
 
 const routeDialects = new Map<string, RouteDialect>();
@@ -244,13 +248,15 @@ function mapReasoningEfforts(
   return Object.keys(map).length > 0 ? map : undefined;
 }
 
-function mapFromModelInfo(entry: ModelInfoEntry): DiscoveredModel | undefined {
+function mapFromModelInfo(
+  entry: ModelInfoEntry,
+  dialect = routeDialectFromEntry(entry),
+): DiscoveredModel | undefined {
   const id = entry.model_name;
   if (!id) return undefined;
   const info = entry.model_info ?? {};
   if (!isChatStyleMode(info.mode)) return undefined;
   const responsesMode = isResponsesMode(info.mode);
-  const dialect = routeDialectFromEntry(entry);
   recordRouteDialect(id, dialect);
   const catalogModel = findCatalogModel(id);
   const reasoningEffortMap = mapReasoningEfforts(info);
@@ -268,6 +274,7 @@ function mapFromModelInfo(entry: ModelInfoEntry): DiscoveredModel | undefined {
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
     maxTokens: info.max_output_tokens ?? DEFAULT_MAX_TOKENS,
     compat: buildCompat(id),
+    ...(dialect ? { routeDialect: dialect } : {}),
     ...(responsesMode ? { api: "openai-responses" as const } : {}),
   };
 }
@@ -367,16 +374,22 @@ export async function discoverModels(
   const infoResult = await fetchJson<ModelInfoResponse>(`${base}/model/info`, apiKey, options);
   if (infoResult.ok) {
     const entries = new Map<string, ModelInfoEntry>();
+    const routeEvidence = new Map<string, Set<RouteDialect | undefined>>();
     for (const entry of infoResult.data.data ?? []) {
       if (!entry.model_name) continue;
       const previous = entries.get(entry.model_name);
+      const dialects = routeEvidence.get(entry.model_name) ?? new Set<RouteDialect | undefined>();
+      dialects.add(routeDialectFromEntry(entry));
+      routeEvidence.set(entry.model_name, dialects);
       entries.set(entry.model_name, {
         ...previous,
         ...entry,
         model_info: { ...previous?.model_info, ...entry.model_info },
       });
     }
-    let models = [...entries.values()].map(mapFromModelInfo).filter((m): m is DiscoveredModel => m !== undefined);
+    let models = [...entries.entries()]
+      .map(([id, entry]) => mapFromModelInfo(entry, aggregateRouteDialects(routeEvidence.get(id)!)))
+      .filter((m): m is DiscoveredModel => m !== undefined);
     // LiteLLM's /model/info does NOT expand wildcard model_name entries (e.g.
     // "lemonade/*" backed by model: openai/* + check_provider_endpoint: true)
     // — it returns the literal wildcard only. The discovered ids live in
