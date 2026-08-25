@@ -524,14 +524,14 @@ describe("extension startup", () => {
           provider: "litellm-anthropic",
           id: "k3-prod",
           api: "openai-completions",
-          routeDialect: "moonshot",
+          suppressReasoningContent: true,
         },
       },
     );
     const otherRoute = await pi.handlers.get("before_provider_request")?.[0]?.(
       { payload: { messages: [] } },
       {
-        model: { provider: "litellm", id: "k3-prod", api: "openai-completions", routeDialect: "other" },
+        model: { provider: "litellm", id: "k3-prod", api: "openai-completions" },
       },
     );
 

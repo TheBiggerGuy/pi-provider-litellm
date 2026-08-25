@@ -21,7 +21,6 @@ import {
   isGpt55Model,
   isMoonshotModel,
   normalizeBaseUrl,
-  shouldSuppressReasoningContent,
 } from "./discover.js";
 import {
   getGcloudToken,
@@ -920,7 +919,7 @@ function prepareLiteLLMRequestPayload(
     next[key] = value;
   };
 
-  if (api !== "openai-responses" && modelId && shouldSuppressReasoningContent(modelId, model.routeDialect)) {
+  if (api !== "openai-responses" && model?.suppressReasoningContent === true) {
     for (const [key, value] of Object.entries(REASONING_SUPPRESSION_DEFAULTS)) {
       if (key !== "thinking") update(key, value);
     }

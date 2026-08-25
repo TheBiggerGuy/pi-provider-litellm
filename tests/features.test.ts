@@ -661,7 +661,7 @@ describe("feature parity", () => {
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
     const updated = beforeRequest?.(
       { payload: { messages: [] } },
-      { model: { provider: "litellm", id: "kimi-k2.6", routeDialect: "moonshot" } },
+      { model: { provider: "litellm", id: "kimi-k2.6", suppressReasoningContent: true } },
     );
     expect(updated).toMatchObject({
       messages: [],
@@ -700,7 +700,7 @@ describe("feature parity", () => {
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
     const updated = beforeRequest?.(
       { payload: { messages: [] } },
-      { model: { provider: "litellm", id: "kimi-k3", api: "openai-completions", routeDialect: "moonshot" } },
+      { model: { provider: "litellm", id: "kimi-k3", api: "openai-completions", suppressReasoningContent: true } },
     );
     expect(updated).toEqual({
       messages: [],
@@ -749,7 +749,7 @@ describe("feature parity", () => {
     });
   });
 
-  it("still suppresses reasoning on Moonshot-native routes", async () => {
+  it("does not suppress reasoning when discovery has no suppression marker", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
     process.env.LITELLM_API_KEY = "sk-test";
@@ -761,7 +761,7 @@ describe("feature parity", () => {
           data: [
             {
               model_name: "k3-prod",
-              litellm_params: { model: "moonshot/kimi-k3" },
+              litellm_params: { model: "moonshot/kimi-k2-thinking" },
               model_info: { mode: "chat" },
             },
           ],
@@ -777,14 +777,9 @@ describe("feature parity", () => {
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
     const updated = beforeRequest?.(
       { payload: { messages: [] } },
-      { model: { provider: "litellm", id: "k3-prod", api: "openai-completions", routeDialect: "moonshot" } },
+      { model: { provider: "litellm", id: "k3-prod", api: "openai-completions" } },
     );
-    expect(updated).toEqual({
-      messages: [],
-      include_reasoning: false,
-      reasoning_content: false,
-      merge_reasoning_content_in_choices: true,
-    });
+    expect(updated).toBeUndefined();
   });
 
   it("leaves Kimi Responses requests unchanged", async () => {
@@ -843,7 +838,7 @@ describe("feature parity", () => {
           ],
         },
       },
-      { model: { provider: "litellm", id: "kimi-k3", routeDialect: "moonshot" } },
+      { model: { provider: "litellm", id: "kimi-k3", suppressReasoningContent: true } },
     );
 
     expect(updated).toEqual({
@@ -902,7 +897,7 @@ describe("feature parity", () => {
           ],
         },
       },
-      { model: { provider: "litellm", id: "kimi-k3", routeDialect: "moonshot" } },
+      { model: { provider: "litellm", id: "kimi-k3", suppressReasoningContent: true } },
     );
 
     expect(updated).toEqual({
@@ -956,7 +951,7 @@ describe("feature parity", () => {
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
     const updated = beforeRequest?.(
       { payload: { messages } },
-      { model: { provider: "litellm", id: "kimi-k3", routeDialect: "moonshot" } },
+      { model: { provider: "litellm", id: "kimi-k3", suppressReasoningContent: true } },
     );
 
     expect(updated?.messages).toBe(messages);
