@@ -696,11 +696,14 @@ describe("feature parity", () => {
     const extension = await loadExtension(agentDir);
     const pi = createPi();
     await extension(pi);
+    await refreshProvider(pi);
 
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
+    const model = pi.providers[0]?.getModels().find((candidate) => candidate.id === "kimi-k3");
+    expect(model).toMatchObject({ suppressReasoningContent: true });
     const updated = beforeRequest?.(
       { payload: { messages: [] } },
-      { model: { provider: "litellm", id: "kimi-k3", api: "openai-completions", suppressReasoningContent: true } },
+      { model },
     );
     expect(updated).toEqual({
       messages: [],
@@ -749,7 +752,7 @@ describe("feature parity", () => {
     });
   });
 
-  it("does not suppress reasoning when discovery has no suppression marker", async () => {
+  it("does not suppress reasoning for forced public or backend discovered models", async () => {
     const agentDir = await mkdtemp(join(tmpdir(), "pi-provider-litellm-"));
     process.env.LITELLM_BASE_URL = "https://litellm.example.com";
     process.env.LITELLM_API_KEY = "sk-test";
@@ -759,6 +762,11 @@ describe("feature parity", () => {
       if (url.endsWith("/model/info")) {
         return jsonResponse(200, {
           data: [
+            {
+              model_name: "kimi-k2-thinking",
+              litellm_params: { model: "moonshot/kimi-k3" },
+              model_info: { mode: "chat" },
+            },
             {
               model_name: "k3-prod",
               litellm_params: { model: "moonshot/kimi-k2-thinking" },
@@ -773,13 +781,14 @@ describe("feature parity", () => {
     const extension = await loadExtension(agentDir);
     const pi = createPi();
     await extension(pi);
+    await refreshProvider(pi);
 
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
-    const updated = beforeRequest?.(
-      { payload: { messages: [] } },
-      { model: { provider: "litellm", id: "k3-prod", api: "openai-completions" } },
-    );
-    expect(updated).toBeUndefined();
+    for (const id of ["kimi-k2-thinking", "k3-prod"]) {
+      const model = pi.providers[0]?.getModels().find((candidate) => candidate.id === id);
+      expect(model).toBeDefined();
+      expect(beforeRequest?.({ payload: { messages: [] } }, { model })).toBeUndefined();
+    }
   });
 
   it("leaves Kimi Responses requests unchanged", async () => {

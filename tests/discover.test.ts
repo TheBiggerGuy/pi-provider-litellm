@@ -453,7 +453,7 @@ describe("discoverModels via /health", () => {
           healthy_endpoints: routes.map((_, index) => ({ model: "kimi-prod", model_id: `route-${index}` })),
         });
       }
-      const route = routes[Number(url.match(/route-(\\d+)/)?.[1])];
+      const route = routes[Number(url.match(/route-(\d+)/)?.[1])];
       return jsonResponse(200, { data: [{ litellm_params: { model: route }, model_info: { mode: "chat" } }] });
     });
 
