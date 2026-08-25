@@ -701,10 +701,7 @@ describe("feature parity", () => {
     const beforeRequest = pi.handlers.get("before_provider_request")?.[0];
     const model = pi.providers[0]?.getModels().find((candidate) => candidate.id === "kimi-k3");
     expect(model).toMatchObject({ suppressReasoningContent: true });
-    const updated = beforeRequest?.(
-      { payload: { messages: [] } },
-      { model },
-    );
+    const updated = beforeRequest?.({ payload: { messages: [] } }, { model });
     expect(updated).toEqual({
       messages: [],
       include_reasoning: false,

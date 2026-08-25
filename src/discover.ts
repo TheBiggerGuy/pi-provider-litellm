@@ -65,8 +65,13 @@ const MOONSHOT_ROUTE_PROVIDERS = new Set(["moonshot", "moonshotai"]);
 function isMoonshotRoute(entry: ModelInfoEntry): boolean {
   const params = entry.litellm_params;
   if (!params) return false;
-  const provider = params.custom_llm_provider ?? params.model?.split("/")[0];
-  return provider !== undefined && MOONSHOT_ROUTE_PROVIDERS.has(provider.toLowerCase());
+  const model = params.model?.trim();
+  if (!model) return false;
+  const providers = [
+    params.custom_llm_provider?.trim(),
+    model.includes("/") ? model.split("/", 1)[0] : undefined,
+  ].filter((provider): provider is string => Boolean(provider));
+  return providers.length > 0 && providers.every((provider) => MOONSHOT_ROUTE_PROVIDERS.has(provider.toLowerCase()));
 }
 
 function shouldSuppressReasoningContent(modelId: string, entry: ModelInfoEntry): boolean {

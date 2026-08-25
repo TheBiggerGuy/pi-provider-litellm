@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  buildCompat,
-  discoverModels,
-  emitsThinkTags,
-  normalizeBaseUrl,
-} from "../src/discover.js";
+import { buildCompat, discoverModels, emitsThinkTags, normalizeBaseUrl } from "../src/discover.js";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -381,6 +376,24 @@ describe("discoverModels via /model/info", () => {
             model_info: { mode: "chat" },
           },
         ],
+      }),
+    );
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.suppressReasoningContent).toBeUndefined();
+  });
+
+  it.each([
+    ["provider-only metadata", { custom_llm_provider: "moonshot" }],
+    [
+      "conflicting Moonshot provider and Azure backend",
+      { custom_llm_provider: "moonshot", model: "azure_ai/FW-Kimi-K3" },
+    ],
+  ])("does not suppress with %s", async (_name, litellm_params) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: [{ model_name: "kimi-prod", litellm_params, model_info: { mode: "chat" } }],
       }),
     );
 
