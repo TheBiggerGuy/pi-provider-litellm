@@ -60,7 +60,39 @@ export function isGpt55Model(modelId: string): boolean {
   return GPT55_MODEL_PATTERN.test(modelId);
 }
 
-export function shouldSuppressReasoningContent(modelId: string): boolean {
+const MOONSHOT_ROUTE_PROVIDERS = new Set(["moonshot", "moonshotai"]);
+
+function isMoonshotRoute(entry: ModelInfoEntry): boolean {
+  const params = entry.litellm_params;
+  if (!params) return false;
+  const model = params.model?.trim();
+  if (!model) return false;
+  const providers = [
+    params.custom_llm_provider?.trim(),
+    model.includes("/") ? model.split("/", 1)[0] : undefined,
+  ].filter((provider): provider is string => Boolean(provider));
+  return providers.length > 0 && providers.every((provider) => MOONSHOT_ROUTE_PROVIDERS.has(provider.toLowerCase()));
+}
+
+function shouldSuppressReasoningContent(modelId: string, entry: ModelInfoEntry): boolean {
+  const routeModelId = entry.litellm_params?.model;
+  return (
+    isMoonshotRoute(entry) &&
+    !FORCED_THINKING_MODEL_PATTERN.test(modelId) &&
+    !(routeModelId && FORCED_THINKING_MODEL_PATTERN.test(routeModelId))
+  );
+}
+
+function aggregateSuppressionEvidence(evidence: Iterable<boolean>): boolean {
+  let hasEvidence = false;
+  for (const suppress of evidence) {
+    hasEvidence = true;
+    if (!suppress) return false;
+  }
+  return hasEvidence;
+}
+
+export function emitsThinkTags(modelId: string): boolean {
   return isMoonshotModel(modelId) && !FORCED_THINKING_MODEL_PATTERN.test(modelId);
 }
 
@@ -217,7 +249,10 @@ function mapReasoningEfforts(
   return Object.keys(map).length > 0 ? map : undefined;
 }
 
-function mapFromModelInfo(entry: ModelInfoEntry): DiscoveredModel | undefined {
+function mapFromModelInfo(
+  entry: ModelInfoEntry,
+  suppressReasoningContent = shouldSuppressReasoningContent(entry.model_name ?? "", entry),
+): DiscoveredModel | undefined {
   const id = entry.model_name;
   if (!id) return undefined;
   const info = entry.model_info ?? {};
@@ -239,6 +274,7 @@ function mapFromModelInfo(entry: ModelInfoEntry): DiscoveredModel | undefined {
     contextWindow: info.max_input_tokens ?? DEFAULT_CONTEXT_WINDOW,
     maxTokens: info.max_output_tokens ?? DEFAULT_MAX_TOKENS,
     compat: buildCompat(id),
+    ...(suppressReasoningContent ? { suppressReasoningContent: true } : {}),
     ...(responsesMode ? { api: "openai-responses" as const } : {}),
   };
 }
@@ -319,11 +355,20 @@ async function discoverFromHealth(
 }
 
 function deduplicateModels(models: DiscoveredModel[]): DiscoveredModel[] {
-  const seen = new Set<string>();
-  return models.filter((m) => {
-    if (seen.has(m.id)) return false;
-    seen.add(m.id);
-    return true;
+  const entries = new Map<string, { model: DiscoveredModel; suppressions: boolean[] }>();
+  for (const model of models) {
+    const existing = entries.get(model.id);
+    if (existing) {
+      existing.suppressions.push(model.suppressReasoningContent === true);
+    } else {
+      entries.set(model.id, { model, suppressions: [model.suppressReasoningContent === true] });
+    }
+  }
+  return [...entries.values()].map(({ model, suppressions }) => {
+    const deduplicated = { ...model };
+    if (aggregateSuppressionEvidence(suppressions)) deduplicated.suppressReasoningContent = true;
+    else delete deduplicated.suppressReasoningContent;
+    return deduplicated;
   });
 }
 
@@ -338,16 +383,22 @@ export async function discoverModels(
   const infoResult = await fetchJson<ModelInfoResponse>(`${base}/model/info`, apiKey, options);
   if (infoResult.ok) {
     const entries = new Map<string, ModelInfoEntry>();
+    const suppressionEvidence = new Map<string, Set<boolean>>();
     for (const entry of infoResult.data.data ?? []) {
       if (!entry.model_name) continue;
       const previous = entries.get(entry.model_name);
+      const suppressions = suppressionEvidence.get(entry.model_name) ?? new Set<boolean>();
+      suppressions.add(shouldSuppressReasoningContent(entry.model_name, entry));
+      suppressionEvidence.set(entry.model_name, suppressions);
       entries.set(entry.model_name, {
         ...previous,
         ...entry,
         model_info: { ...previous?.model_info, ...entry.model_info },
       });
     }
-    let models = [...entries.values()].map(mapFromModelInfo).filter((m): m is DiscoveredModel => m !== undefined);
+    let models = [...entries.entries()]
+      .map(([id, entry]) => mapFromModelInfo(entry, aggregateSuppressionEvidence(suppressionEvidence.get(id)!)))
+      .filter((m): m is DiscoveredModel => m !== undefined);
     // LiteLLM's /model/info does NOT expand wildcard model_name entries (e.g.
     // "lemonade/*" backed by model: openai/* + check_provider_endpoint: true)
     // — it returns the literal wildcard only. The discovered ids live in

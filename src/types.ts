@@ -13,7 +13,10 @@ export type LiteLLMRuntimeAuth = {
 
 export type DiscoveredModel = Omit<Model<"openai-completions">, "provider" | "api" | "baseUrl"> & {
   api?: LiteLLMApi;
+  suppressReasoningContent?: boolean;
 };
+
+export type LiteLLMModel = Model<LiteLLMApi> & { suppressReasoningContent?: boolean };
 
 export interface DiscoveryResult {
   models: DiscoveredModel[];
@@ -29,6 +32,10 @@ export interface DiscoveryOptions {
 
 export interface ModelInfoEntry {
   model_name?: string;
+  litellm_params?: {
+    model?: string;
+    custom_llm_provider?: string;
+  };
   model_info?: {
     mode?: string | null;
     input_cost_per_token?: number;

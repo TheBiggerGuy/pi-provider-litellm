@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildCompat, discoverModels, normalizeBaseUrl, shouldSuppressReasoningContent } from "../src/discover.js";
+import { buildCompat, discoverModels, emitsThinkTags, normalizeBaseUrl } from "../src/discover.js";
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -113,18 +113,10 @@ describe("buildCompat", () => {
   });
 });
 
-describe("shouldSuppressReasoningContent", () => {
-  it("suppresses separate reasoning streams for Kimi/Moonshot aliases", () => {
-    expect(shouldSuppressReasoningContent("kimi-k2.6")).toBe(true);
-    expect(shouldSuppressReasoningContent("moonshotai/kimi-k2")).toBe(true);
-  });
-
-  it("does not suppress explicit forced-thinking models", () => {
-    expect(shouldSuppressReasoningContent("kimi-k2-thinking")).toBe(false);
-  });
-
-  it("does not suppress unrelated models", () => {
-    expect(shouldSuppressReasoningContent("openai/gpt-4o")).toBe(false);
+describe("Kimi reasoning compatibility", () => {
+  it("still parses think tags for unknown routes that look like Kimi", () => {
+    expect(emitsThinkTags("kimi-k3")).toBe(true);
+    expect(emitsThinkTags("openai/gpt-4o")).toBe(false);
   });
 });
 
@@ -333,6 +325,178 @@ describe("discoverModels via /model/info", () => {
       maxTokens: 8192,
       cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 },
     });
+  });
+
+  it("keeps Kimi compatibility on non-Moonshot routes", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: [
+          {
+            model_name: "kimi-k3",
+            litellm_params: { model: "azure_ai/FW-Kimi-K3" },
+            model_info: { mode: "chat" },
+          },
+        ],
+      }),
+    );
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.compat).toEqual(buildCompat("kimi-k3"));
+  });
+
+  it.each([
+    ["Moonshot deployments", ["moonshot/kimi-k3", "moonshot/kimi-k3"], true],
+    ["mixed deployments", ["moonshot/kimi-k3", "azure_ai/FW-Kimi-K3"], false],
+    ["reversed mixed deployments", ["azure_ai/FW-Kimi-K3", "moonshot/kimi-k3"], false],
+    ["incomplete deployment metadata", ["moonshot/kimi-k3", undefined], false],
+  ] as const)("aggregates %s conservatively", async (_name, routes, suppress) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: routes.map((model) => ({
+          model_name: "kimi-prod",
+          ...(model ? { litellm_params: { model } } : {}),
+          model_info: { mode: "chat" },
+        })),
+      }),
+    );
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.suppressReasoningContent === true).toBe(suppress);
+  });
+
+  it("does not suppress an alias routed to a forced-thinking Moonshot model", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: [
+          {
+            model_name: "k3-prod",
+            litellm_params: { model: "moonshot/kimi-k2-thinking" },
+            model_info: { mode: "chat" },
+          },
+        ],
+      }),
+    );
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.suppressReasoningContent).toBeUndefined();
+  });
+
+  it.each([
+    ["provider-only metadata", { custom_llm_provider: "moonshot" }],
+    [
+      "conflicting Moonshot provider and Azure backend",
+      { custom_llm_provider: "moonshot", model: "azure_ai/FW-Kimi-K3" },
+    ],
+  ])("does not suppress with %s", async (_name, litellm_params) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse(200, {
+        data: [{ model_name: "kimi-prod", litellm_params, model_info: { mode: "chat" } }],
+      }),
+    );
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.suppressReasoningContent).toBeUndefined();
+  });
+
+  it("keeps route evidence isolated between discoveries", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const model = url.startsWith("https://moonshot.example.com") ? "moonshot/kimi-k3" : "azure_ai/FW-Kimi-K3";
+      return jsonResponse(200, {
+        data: [
+          {
+            model_name: "kimi-prod",
+            litellm_params: { model },
+            model_info: { mode: "chat" },
+          },
+        ],
+      });
+    });
+
+    const moonshot = await discoverModels("https://moonshot.example.com", "sk-test", {});
+    const azure = await discoverModels("https://azure.example.com", "sk-test", {});
+
+    expect(moonshot.models[0]?.suppressReasoningContent).toBe(true);
+    expect(azure.models[0]?.suppressReasoningContent).toBeUndefined();
+  });
+
+  it("does not reuse route evidence after metadata fallback", async () => {
+    let fallback = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info")) {
+        return fallback
+          ? jsonResponse(403, {})
+          : jsonResponse(200, {
+              data: [
+                {
+                  model_name: "kimi-prod",
+                  litellm_params: { model: "moonshot/kimi-k3" },
+                  model_info: { mode: "chat" },
+                },
+              ],
+            });
+      }
+      if (url.endsWith("/v1/models")) return jsonResponse(200, { data: [{ id: "kimi-prod" }] });
+      throw new Error(`unexpected URL: ${url}`);
+    });
+
+    await discoverModels("https://litellm.example.com", "sk-test", {});
+    fallback = true;
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.suppressReasoningContent).toBeUndefined();
+  });
+});
+
+describe("discoverModels via /health", () => {
+  it.each([
+    ["Moonshot first", ["moonshot/kimi-k3", "azure_ai/FW-Kimi-K3"]],
+    ["Azure first", ["azure_ai/FW-Kimi-K3", "moonshot/kimi-k3"]],
+  ] as const)("does not suppress duplicate mixed routes when %s", async (_name, routes) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info") || url.endsWith("/v1/models")) return jsonResponse(403, {});
+      if (url.endsWith("/health")) {
+        return jsonResponse(200, {
+          healthy_endpoints: routes.map((_, index) => ({ model: "kimi-prod", model_id: `route-${index}` })),
+        });
+      }
+      const route = routes[Number(url.match(/route-(\d+)/)?.[1])];
+      return jsonResponse(200, { data: [{ litellm_params: { model: route }, model_info: { mode: "chat" } }] });
+    });
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.source).toBe("health");
+    expect(result.models).toHaveLength(1);
+    expect(result.models[0]?.suppressReasoningContent).toBeUndefined();
+  });
+
+  it("suppresses duplicate proven non-forced Moonshot health routes", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/model/info") || url.endsWith("/v1/models")) return jsonResponse(403, {});
+      if (url.endsWith("/health")) {
+        return jsonResponse(200, {
+          healthy_endpoints: [
+            { model: "kimi-prod", model_id: "route-1" },
+            { model: "kimi-prod", model_id: "route-2" },
+          ],
+        });
+      }
+      return jsonResponse(200, {
+        data: [{ litellm_params: { model: "moonshot/kimi-k3" }, model_info: { mode: "chat" } }],
+      });
+    });
+
+    const result = await discoverModels("https://litellm.example.com", "sk-test", {});
+
+    expect(result.models[0]?.suppressReasoningContent).toBe(true);
   });
 });
 

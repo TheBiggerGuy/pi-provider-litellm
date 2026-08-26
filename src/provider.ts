@@ -1,7 +1,7 @@
-import { type Credential, createProvider, type Model, type Provider, type ProviderAuth } from "@earendil-works/pi-ai";
+import { type Credential, createProvider, type Provider, type ProviderAuth } from "@earendil-works/pi-ai";
 import { openAICompletionsApi, openAIResponsesApi } from "@earendil-works/pi-ai/compat";
 import { enrichCachedModel } from "./discover.js";
-import type { DiscoveredModel, DiscoveryResult, LiteLLMApi } from "./types.js";
+import type { DiscoveredModel, DiscoveryResult, LiteLLMApi, LiteLLMModel } from "./types.js";
 
 export type LiteLLMProviderOptions = {
   id: string;
@@ -10,21 +10,17 @@ export type LiteLLMProviderOptions = {
   auth: ProviderAuth;
   /** Catalog discovered during activation. Pi's startup refresh never allows network access, so
    * without a seed the provider stays empty until the user opens /model. */
-  models?: readonly Model<LiteLLMApi>[];
+  models?: readonly LiteLLMModel[];
   discover(credential: Credential, signal?: AbortSignal): Promise<DiscoveryResult & { baseUrl?: string }>;
 };
 
-export function toNativeModels(
-  provider: string,
-  baseUrl: string,
-  models: readonly DiscoveredModel[],
-): Model<LiteLLMApi>[] {
+export function toNativeModels(provider: string, baseUrl: string, models: readonly DiscoveredModel[]): LiteLLMModel[] {
   return models.map((model) => ({
     ...model,
     provider,
     api: model.api ?? "openai-completions",
     baseUrl,
-  })) as Model<LiteLLMApi>[];
+  })) as LiteLLMModel[];
 }
 
 export function createLiteLLMProvider(options: LiteLLMProviderOptions): Provider<LiteLLMApi> {
